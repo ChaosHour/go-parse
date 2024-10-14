@@ -39,7 +39,7 @@ Log position: 10559
 
 
 
-./go run -file tests/mysql-bin.000001 -logPosition 10093 --stopAtNext
+./go run -file tests/mysql-bin.000001 -logPosition 10093 -stopAtNext
 === QueryEvent ===
 Date: 2022-09-05 16:46:41
 Log position: 10559
