@@ -125,4 +125,6 @@ Linux:
 env GOOS=linux GOARCH=amd64 go build .
 ```
 
-## A Big Thank you! to [go-mysql](https://github.com/go-mysql-org/go-mysql) for the inspiration for this project. You did all the hard work, and I am very grateful
+## A Big Thank you! to [go-mysql](https://github.com/go-mysql-org/go-mysql)
+
+You did all the hard work, and I am very grateful
