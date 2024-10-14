@@ -3,7 +3,7 @@
 is a Go cli MySQL binlog parser
 
 ```Go
-./go-parse . -h
+./go-parse  -h
 Usage: go-parse -file <binlog file> [-offset <offset>] [-logPosition <log position>] [-listPositions] [-stopAtNext]
   -file string
     	Binlog file to parse
