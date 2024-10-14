@@ -107,3 +107,22 @@ DELIMITER ;
 /*!50003 SET COMPLETION_TYPE=@OLD_COMPLETION_TYPE*/;
 /*!50530 SET @@SESSION.PSEUDO_SLAVE_MODE=0*/;
 ```
+
+## To build
+
+```bash
+To build:
+
+go build -o go-parse
+
+FreeBSD:
+env GOOS=freebsd GOARCH=amd64 go build .
+
+On Mac:
+env GOOS=darwin GOARCH=amd64 go build .
+
+Linux:
+env GOOS=linux GOARCH=amd64 go build .
+```
+
+## A Big Thank you! to [go-mysql](https://github.com/go-mysql-org/go-mysql) for the inspiration for this project
