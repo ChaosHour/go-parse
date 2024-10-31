@@ -19,8 +19,13 @@ jobs:
       with:
         go-version: '1.21'
 
-    - name: Create bin directory
-      run: mkdir -p bin
+    - name: Clean and Create Directories
+      run: |
+        rm -f bin/go-parse-*
+        rm -rf ~/.cache/go-build
+        mkdir -p ~/.cache/go-build
+        rm -rf ~/go/pkg/mod
+        mkdir -p ~/go/pkg/mod
 
     - name: Go Cache
       uses: actions/cache@v4
@@ -29,7 +34,7 @@ jobs:
         path: |
           ~/.cache/go-build
           ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-${{ github.run_id }}
         restore-keys: |
           ${{ runner.os }}-go-
 
