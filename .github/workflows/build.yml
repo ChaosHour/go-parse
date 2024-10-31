@@ -19,8 +19,12 @@ jobs:
       with:
         go-version: '1.21'
 
+    - name: Create bin directory
+      run: mkdir -p bin
+
     - name: Go Cache
-      uses: actions/cache@v3
+      uses: actions/cache@v4
+      id: go-cache
       with:
         path: |
           ~/.cache/go-build
@@ -28,6 +32,13 @@ jobs:
         key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
         restore-keys: |
           ${{ runner.os }}-go-
+
+    - name: Debug Cache
+      if: failure() && steps.go-cache.outcome == 'failure'
+      run: |
+        ls -la ~/.cache || true
+        ls -la ~/go/pkg || true
+        echo "Cache directories may not exist yet, continuing with build"
 
     - name: Build Linux Binary
       run: |
