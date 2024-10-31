@@ -1,6 +1,8 @@
-# Go-parse
+# go-parse
 
-is a Go cli MySQL binlog parser
+A MySQL binary log parser utility.
+
+## Usage
 
 ```Go
 ./go-parse  -h
