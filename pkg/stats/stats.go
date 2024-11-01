@@ -5,83 +5,96 @@ import (
 	"time"
 )
 
-type DbStats struct {
-	Database string
-	Table    string
-	Inserts  int64
-	Updates  int64
-	Deletes  int64
+type Operation struct {
+	Count    int
+	RowCount int
+}
+
+type TableStats struct {
+	Operations map[string]*Operation // operation -> stats
 }
 
 type Statistics struct {
 	EventCounts map[byte]int
 	TotalEvents int
 	StartTime   time.Time
-	Stats       map[string]map[string]*DbStats // db -> table -> stats
+	Stats       map[string]map[string]*TableStats // db -> table -> stats
 }
 
 func NewStatistics() *Statistics {
 	return &Statistics{
 		EventCounts: make(map[byte]int),
 		StartTime:   time.Now(),
-		Stats:       make(map[string]map[string]*DbStats),
+		Stats:       make(map[string]map[string]*TableStats),
 	}
 }
 
-// Record handles both event type recording and DB operation recording
-func (s *Statistics) Record(eventType interface{}, table ...string) {
-	switch t := eventType.(type) {
-	case byte:
-		s.EventCounts[t]++
-		s.TotalEvents++
-	case string:
-		if len(table) >= 2 {
-			database, tableName := table[0], table[1]
-			if _, exists := s.Stats[database]; !exists {
-				s.Stats[database] = make(map[string]*DbStats)
-			}
-			if _, exists := s.Stats[database][tableName]; !exists {
-				s.Stats[database][tableName] = &DbStats{
-					Database: database,
-					Table:    tableName,
-				}
-			}
-			switch eventType {
-			case "INSERT":
-				s.Stats[database][tableName].Inserts++
-			case "UPDATE":
-				s.Stats[database][tableName].Updates++
-			case "DELETE":
-				s.Stats[database][tableName].Deletes++
-			}
+func (s *Statistics) RecordEventType(eventType byte) {
+	s.EventCounts[eventType]++
+	s.TotalEvents++
+}
+
+func (s *Statistics) RecordOperation(database, table, operation string, rowCount int) {
+	// Initialize database map if it doesn't exist
+	if _, exists := s.Stats[database]; !exists {
+		s.Stats[database] = make(map[string]*TableStats)
+	}
+
+	// Initialize table stats if they don't exist
+	if _, exists := s.Stats[database][table]; !exists {
+		s.Stats[database][table] = &TableStats{
+			Operations: make(map[string]*Operation),
 		}
 	}
+
+	// Initialize operation stats if they don't exist
+	if _, exists := s.Stats[database][table].Operations[operation]; !exists {
+		s.Stats[database][table].Operations[operation] = &Operation{0, 0}
+	}
+
+	// Update stats
+	s.Stats[database][table].Operations[operation].Count++
+	s.Stats[database][table].Operations[operation].RowCount += rowCount
 }
 
 func (s *Statistics) PrintStats() {
-	// Print event type statistics
 	duration := time.Since(s.StartTime)
 	fmt.Printf("\nParsing Statistics:\n")
 	fmt.Printf("Total Events: %d\n", s.TotalEvents)
 	fmt.Printf("Duration: %v\n", duration)
-	fmt.Printf("\nEvent Type Breakdown:\n")
-	for eventType, count := range s.EventCounts {
-		fmt.Printf("- Type %d: %d\n", eventType, count)
+
+	if len(s.EventCounts) > 0 {
+		fmt.Printf("\nEvent Type Breakdown:\n")
+		for eventType, count := range s.EventCounts {
+			fmt.Printf("- Type %d: %d\n", eventType, count)
+		}
 	}
 
-	// Print DB operation statistics
 	if len(s.Stats) > 0 {
-		fmt.Printf("\nOperation Statistics by Database/Table:\n")
-		fmt.Printf("====================================\n")
+		fmt.Printf("\nOperation Statistics:\n")
+		fmt.Printf("====================\n")
+
+		var totalOps, totalRows int
+
 		for db, tables := range s.Stats {
 			fmt.Printf("\nDatabase: %s\n", db)
-			for _, stats := range tables {
-				fmt.Printf("  Table: %s\n", stats.Table)
-				fmt.Printf("    Inserts: %d\n", stats.Inserts)
-				fmt.Printf("    Updates: %d\n", stats.Updates)
-				fmt.Printf("    Deletes: %d\n", stats.Deletes)
+			fmt.Println("--------------------")
+
+			for table, stats := range tables {
+				fmt.Printf("\nTable: %s\n", table)
+				for op, opStats := range stats.Operations {
+					fmt.Printf("  %-7s: %d operations affecting %d rows\n",
+						op, opStats.Count, opStats.RowCount)
+					totalOps += opStats.Count
+					totalRows += opStats.RowCount
+				}
 			}
 		}
+
+		fmt.Println("\nSummary:")
+		fmt.Println("--------")
+		fmt.Printf("Total operations: %d\n", totalOps)
+		fmt.Printf("Total rows affected: %d\n", totalRows)
 	}
 }
 

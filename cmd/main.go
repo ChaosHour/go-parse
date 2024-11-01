@@ -18,11 +18,12 @@ var (
 	stopAtNext    = flag.Bool("stopAtNext", false, "Stop at the next log position")
 	showStats     = flag.Bool("showStats", false, "Show operation statistics by database and table")
 	verbose       = flag.Bool("verbose", false, "Show detailed position information for each event")
+	parseAll      = flag.Bool("all", false, "Parse entire binlog file")
 )
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s -file <binlog file> [-offset <offset>] [-logPosition <log position>] [-listPositions] [-stopAtNext] [-showStats] [-verbose]\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s -file <binlog file> [-all] [-offset <offset>] [-logPosition <log position>] [-listPositions] [-stopAtNext] [-showStats] [-verbose]\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -42,15 +43,19 @@ func main() {
 		return
 	}
 
-	startPosition := *offset
-	if startPosition == -1 && *logPosition != -1 {
-		startPosition = *logPosition
-	}
+	const BINLOG_START_POSITION = 4
+	startPosition := int64(BINLOG_START_POSITION) // Default start position for parsing entire file
+	if !*parseAll {
+		startPosition = *offset
+		if startPosition == -1 && *logPosition != -1 {
+			startPosition = *logPosition
+		}
 
-	if startPosition == -1 {
-		fmt.Fprintf(os.Stderr, "Error: Either offset or log position must be specified\n")
-		flag.Usage()
-		os.Exit(1)
+		if startPosition == -1 {
+			fmt.Fprintf(os.Stderr, "Error: Either offset, log position, or -all flag must be specified\n")
+			flag.Usage()
+			os.Exit(1)
+		}
 	}
 
 	// Create statistics collector
@@ -68,31 +73,38 @@ func main() {
 			fmt.Printf("\nEvent boundaries:")
 			fmt.Printf("\n  Start position: %d", eventStartPos)
 			fmt.Printf("\n  Size: %d bytes", e.Header.EventSize)
-			fmt.Printf("\n  End position: %d (where next event starts)\n", eventEndPos)
+			fmt.Printf("\n  End position: %d (where next event starts)", eventEndPos)
+			if *parseAll {
+				fmt.Printf("\n  (Reading entire binlog starting from position %d)", BINLOG_START_POSITION)
+			} else {
+				fmt.Printf("\n  (Target position: %d)", startPosition)
+			}
+			fmt.Println()
 		}
 
-		// Debug position info
-		if *showStats {
-			fmt.Printf("Event: start=%d end=%d target=%d\n", eventStartPos, eventEndPos, startPosition)
-		}
-
-		// Show events at our target position
-		if eventStartPos == uint32(startPosition) {
+		// Process events based on -all flag or specific position
+		if *parseAll || eventStartPos == uint32(startPosition) {
 			eventsFound = true
-			e.Dump(os.Stdout)
+
+			// Only dump event details if not showing stats
+			if !*showStats {
+				e.Dump(os.Stdout)
+			}
 
 			// Add statistics tracking for different event types
 			if rowsEvent, ok := e.Event.(*replication.RowsEvent); ok {
+				schema := string(rowsEvent.Table.Schema)
+				table := string(rowsEvent.Table.Table)
 				switch e.Header.EventType {
 				case replication.WRITE_ROWS_EVENTv1, replication.WRITE_ROWS_EVENTv2:
-					stats.Record(string(rowsEvent.Table.Schema), string(rowsEvent.Table.Table), "INSERT")
+					stats.RecordOperation(schema, table, "INSERT", len(rowsEvent.Rows))
 				case replication.UPDATE_ROWS_EVENTv1, replication.UPDATE_ROWS_EVENTv2:
-					stats.Record(string(rowsEvent.Table.Schema), string(rowsEvent.Table.Table), "UPDATE")
+					stats.RecordOperation(schema, table, "UPDATE", len(rowsEvent.Rows)/2) // Divide by 2 as updates have before/after rows
 				case replication.DELETE_ROWS_EVENTv1, replication.DELETE_ROWS_EVENTv2:
-					stats.Record(string(rowsEvent.Table.Schema), string(rowsEvent.Table.Table), "DELETE")
+					stats.RecordOperation(schema, table, "DELETE", len(rowsEvent.Rows))
 				}
 			}
-		} else if eventsFound && eventStartPos > uint32(startPosition) {
+		} else if eventsFound && eventStartPos > uint32(startPosition) && !*parseAll {
 			if *stopAtNext {
 				// We've found the next position after our target
 				return fmt.Errorf("found next event at position %d (previous events ended at %d)",
