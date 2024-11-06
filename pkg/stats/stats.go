@@ -2,6 +2,8 @@ package stats
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -59,8 +61,10 @@ func (s *Statistics) RecordOperation(database, table, operation string, rowCount
 
 func (s *Statistics) PrintStats() {
 	duration := time.Since(s.StartTime)
+	opsPerSec := float64(s.TotalEvents) / duration.Seconds()
+
 	fmt.Printf("\nParsing Statistics:\n")
-	fmt.Printf("Total Events: %d\n", s.TotalEvents)
+	fmt.Printf("Total Events: %d (%.2f ops/sec)\n", s.TotalEvents, opsPerSec)
 	fmt.Printf("Duration: %v\n", duration)
 
 	if len(s.EventCounts) > 0 {
@@ -76,25 +80,53 @@ func (s *Statistics) PrintStats() {
 
 		var totalOps, totalRows int
 
-		for db, tables := range s.Stats {
-			fmt.Printf("\nDatabase: %s\n", db)
-			fmt.Println("--------------------")
+		// Sort databases for consistent output
+		dbNames := make([]string, 0, len(s.Stats))
+		for db := range s.Stats {
+			dbNames = append(dbNames, db)
+		}
+		sort.Strings(dbNames)
 
-			for table, stats := range tables {
+		for _, db := range dbNames {
+			tables := s.Stats[db]
+			fmt.Printf("\nDatabase: %s\n", db)
+			fmt.Printf("%s\n", strings.Repeat("-", len(db)+10))
+
+			// Sort tables for consistent output
+			tableNames := make([]string, 0, len(tables))
+			for table := range tables {
+				tableNames = append(tableNames, table)
+			}
+			sort.Strings(tableNames)
+
+			for _, table := range tableNames {
+				stats := tables[table]
 				fmt.Printf("\nTable: %s\n", table)
-				for op, opStats := range stats.Operations {
-					fmt.Printf("  %-7s: %d operations affecting %d rows\n",
-						op, opStats.Count, opStats.RowCount)
+
+				// Sort operations for consistent output
+				ops := make([]string, 0, len(stats.Operations))
+				for op := range stats.Operations {
+					ops = append(ops, op)
+				}
+				sort.Strings(ops)
+
+				for _, op := range ops {
+					opStats := stats.Operations[op]
+					fmt.Printf("  %-7s: %d operations affecting %d rows (avg %.1f rows/op)\n",
+						op, opStats.Count, opStats.RowCount,
+						float64(opStats.RowCount)/float64(opStats.Count))
 					totalOps += opStats.Count
 					totalRows += opStats.RowCount
 				}
 			}
 		}
 
-		fmt.Println("\nSummary:")
-		fmt.Println("--------")
+		fmt.Printf("\nSummary:\n")
+		fmt.Printf("--------\n")
 		fmt.Printf("Total operations: %d\n", totalOps)
 		fmt.Printf("Total rows affected: %d\n", totalRows)
+		fmt.Printf("Average rows per operation: %.1f\n", float64(totalRows)/float64(totalOps))
+		fmt.Printf("Operations per second: %.2f\n", float64(totalOps)/duration.Seconds())
 	}
 }
 
