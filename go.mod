@@ -1,7 +1,5 @@
 module github.com/ChaosHour/go-parse
 
-replace github.com/siddontang/go-mysql => github.com/go-mysql-org/go-mysql v1.9.1
-
 go 1.23.2
 
 require github.com/go-mysql-org/go-mysql v1.9.1

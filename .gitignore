@@ -1,0 +1,5 @@
+# Ignore binary files in bin directory
+bin/*
+
+# Keep the bin directory structure
+!bin/.gitkeep
