@@ -8,8 +8,10 @@ import (
 )
 
 type Operation struct {
-	Count    int
-	RowCount int
+	Count     int
+	RowCount  int
+	FirstSeen time.Time
+	LastSeen  time.Time
 }
 
 type TableStats struct {
@@ -36,7 +38,7 @@ func (s *Statistics) RecordEventType(eventType byte) {
 	s.TotalEvents++
 }
 
-func (s *Statistics) RecordOperation(database, table, operation string, rowCount int) {
+func (s *Statistics) RecordOperation(database, table, operation string, rowCount int, eventTime time.Time) {
 	// Initialize database map if it doesn't exist
 	if _, exists := s.Stats[database]; !exists {
 		s.Stats[database] = make(map[string]*TableStats)
@@ -51,12 +53,20 @@ func (s *Statistics) RecordOperation(database, table, operation string, rowCount
 
 	// Initialize operation stats if they don't exist
 	if _, exists := s.Stats[database][table].Operations[operation]; !exists {
-		s.Stats[database][table].Operations[operation] = &Operation{0, 0}
+		s.Stats[database][table].Operations[operation] = &Operation{Count: 0, RowCount: 0}
 	}
 
 	// Update stats
-	s.Stats[database][table].Operations[operation].Count++
-	s.Stats[database][table].Operations[operation].RowCount += rowCount
+	opStats := s.Stats[database][table].Operations[operation]
+	opStats.Count++
+	opStats.RowCount += rowCount
+	// Update first/last seen timestamps
+	if opStats.FirstSeen.IsZero() || eventTime.Before(opStats.FirstSeen) {
+		opStats.FirstSeen = eventTime
+	}
+	if opStats.LastSeen.IsZero() || eventTime.After(opStats.LastSeen) {
+		opStats.LastSeen = eventTime
+	}
 }
 
 func (s *Statistics) PrintStats() {
@@ -112,9 +122,15 @@ func (s *Statistics) PrintStats() {
 
 				for _, op := range ops {
 					opStats := stats.Operations[op]
+					avg := float64(opStats.RowCount) / float64(opStats.Count)
 					fmt.Printf("  %-7s: %d operations affecting %d rows (avg %.1f rows/op)\n",
-						op, opStats.Count, opStats.RowCount,
-						float64(opStats.RowCount)/float64(opStats.Count))
+						op, opStats.Count, opStats.RowCount, avg)
+					// If we have timestamps, print time range in local timezone
+					if !opStats.FirstSeen.IsZero() {
+						fmt.Printf("    time range: %s -> %s\n",
+							opStats.FirstSeen.Local().Format("2006-01-02 15:04:05"),
+							opStats.LastSeen.Local().Format("2006-01-02 15:04:05"))
+					}
 					totalOps += opStats.Count
 					totalRows += opStats.RowCount
 				}
