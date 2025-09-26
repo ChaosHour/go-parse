@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env zsh
 # Scan binlog files in a directory and run go-parse to detect large operations.
 
 set -euo pipefail

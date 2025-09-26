@@ -1,31 +1,31 @@
-#!/bin/bash
+#! /usr/bin/env zsh
 
-echo "🔍 FUZZY SEARCH DEMONSTRATION"
+echo " FUZZY SEARCH DEMONSTRATION"
 echo "============================="
 echo ""
 
-echo "📊 Your Cloud SQL Binlog (Row-Based):"
+echo " Your Cloud SQL Binlog (Row-Based):"
 echo "------------------------------------"
 echo "Available queries: Only transaction boundaries"
 echo ""
-./bin/go-parse -file ~/projects/go_projects/go-grab/binlogs/mysql-bin.004258 -fuzzySearch -searchKeywords "BEGIN" -json -all | jq 'select(.matched_keyword) | {keyword: .matched_keyword, query: .query, timestamp: .timestamp}' | head -2
+./bin/go-parse -file mysql-bin.004258 -fuzzySearch -searchKeywords "BEGIN" -json -all | jq 'select(.matched_keyword) | {keyword: .matched_keyword, query: .query, timestamp: .timestamp}' | head -2
 
 echo ""
-echo "📋 What you CAN search for in Cloud SQL:"
+echo " What you CAN search for in Cloud SQL:"
 echo "---------------------------------------"
 echo "• BEGIN (transaction start)"
 echo "• COMMIT (transaction end)"  
 echo "• ROLLBACK (transaction rollback)"
 echo ""
 
-echo "💡 Statement-Based Binlog Example:"
+echo " Statement-Based Binlog Example:"
 echo "----------------------------------"
 echo "Full SQL queries with fuzzy search:"
 echo ""
 ./bin/go-parse -file tests/mysql-bin.000001 -fuzzySearch -searchKeywords "CREATE" -json -all | jq 'select(.matched_keyword) | {keyword: .matched_keyword, query: (.query | .[0:120] + "..."), schema: .schema}' | head -2
 
 echo ""
-echo "🎯 What you COULD search for with statement-based:"
+echo " What you COULD search for with statement-based:"
 echo "------------------------------------------------"
 echo "• SELECT statements"
 echo "• INSERT statements" 
@@ -37,7 +37,7 @@ echo "• DROP statements"
 echo "• Any custom SQL patterns"
 echo ""
 
-echo "🔄 For Cloud SQL users who need SQL analysis:"
+echo " For Cloud SQL users who need SQL analysis:"
 echo "--------------------------------------------"
 echo "1. Enable General Query Log (if available)"
 echo "2. Use application-level SQL logging"
