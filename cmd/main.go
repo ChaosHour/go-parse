@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -15,6 +16,9 @@ import (
 	"github.com/ChaosHour/go-parse/pkg/stats" // Updated import path
 	"github.com/go-mysql-org/go-mysql/replication"
 )
+
+// Sentinel error for stopAtNext flow
+var errFoundNextEvent = errors.New("found next event")
 
 // Add event type mapping
 var mysqlTypeNames = map[byte]string{
@@ -226,6 +230,17 @@ func extractColumnValues(rowSlice []interface{}, tblInfo *schema.Table, extractC
 	return values
 }
 
+func getAfterImageRow(rows [][]interface{}) []interface{} {
+	// UPDATE events store rows as before/after pairs. Prefer the first after-image.
+	if len(rows) > 1 {
+		return rows[1]
+	}
+	if len(rows) > 0 {
+		return rows[0]
+	}
+	return nil
+}
+
 var (
 	binlogFile     = flag.String("file", "", "Binlog file to parse")
 	offset         = flag.Int64("offset", -1, "Starting offset (use -1 to ignore)")
@@ -374,6 +389,12 @@ func main() {
 	var currentGTID string
 	var extractColsList []string
 
+	// Create JSON encoder once if JSON output is enabled
+	var encoder *json.Encoder
+	if *jsonOutput {
+		encoder = json.NewEncoder(os.Stdout)
+	}
+
 	if *extractCols != "" {
 		extractColsList = strings.Split(*extractCols, ",")
 		for i, col := range extractColsList {
@@ -442,7 +463,7 @@ func main() {
 								"event_size":      e.Header.EventSize,
 							}
 
-							if err := json.NewEncoder(os.Stdout).Encode(fuzzyRecord); err != nil {
+							if err := encoder.Encode(fuzzyRecord); err != nil {
 								fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
 							}
 						} else {
@@ -573,7 +594,7 @@ func main() {
 							Query:           lastQuery,
 						}
 
-						if err := json.NewEncoder(os.Stdout).Encode(record); err != nil {
+						if err := encoder.Encode(record); err != nil {
 							fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
 						}
 					}
@@ -597,14 +618,11 @@ func main() {
 					}
 
 					if *jsonOutput {
-						// For UPDATE, extract from the "after" values (even indices in the flattened array)
+						// For UPDATE, extract from the first "after" row image.
 						var extractedValues map[string]interface{}
-						if len(rowsEvent.Rows) > 0 && len(extractColsList) > 0 {
-							// UPDATE events have before/after pairs, we want the "after" values
-							afterRow := rowsEvent.Rows[0] // This would be the "after" row in a before/after pair
+						if afterRow := getAfterImageRow(rowsEvent.Rows); afterRow != nil && len(extractColsList) > 0 {
 							extractedValues = extractColumnValues(afterRow, tblInfo, extractColsList)
 						}
-
 						record := EventRecord{
 							EventType:       "UPDATE",
 							Timestamp:       eventTime.Format(time.RFC3339),
@@ -619,7 +637,7 @@ func main() {
 							Query:           lastQuery,
 						}
 
-						if err := json.NewEncoder(os.Stdout).Encode(record); err != nil {
+						if err := encoder.Encode(record); err != nil{
 							fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
 						}
 					}
@@ -661,7 +679,7 @@ func main() {
 							Query:           lastQuery,
 						}
 
-						if err := json.NewEncoder(os.Stdout).Encode(record); err != nil {
+						if err := encoder.Encode(record); err != nil {
 							fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
 						}
 					}
@@ -679,15 +697,15 @@ func main() {
 		} else if eventsFound && eventStartPos > uint32(startPosition) && !*parseAll {
 			if *stopAtNext {
 				// We've found the next position after our target
-				return fmt.Errorf("found next event at position %d (previous events ended at %d)",
-					eventStartPos, e.Header.LogPos-uint32(e.Header.EventSize))
+				return fmt.Errorf("%w at position %d (previous events ended at %d)",
+					errFoundNextEvent, eventStartPos, e.Header.LogPos-uint32(e.Header.EventSize))
 			}
 		}
 		return nil
 	})
 
 	if err != nil {
-		if !strings.HasPrefix(err.Error(), "found next event") {
+		if !errors.Is(err, errFoundNextEvent) {
 			fmt.Printf("Error: %v\n", err)
 		} else {
 			fmt.Println(err.Error())
@@ -696,7 +714,7 @@ func main() {
 
 	// At the end of processing, if showStats is true:
 	if *showStats {
-		statistics.Print()
+		statistics.PrintStats()
 		if schemaRegistry != nil {
 			schemaRegistry.PrintWarnings()
 		}

@@ -3,3 +3,6 @@ bin/*
 
 # Keep the bin directory structure
 !bin/.gitkeep
+
+# Ignore ctags file
+tags

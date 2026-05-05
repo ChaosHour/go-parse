@@ -79,8 +79,7 @@ func (sr *SchemaRegistry) LoadFromFile(filename string) error {
 
 		// Handle USE statements (case-insensitive)
 		if strings.HasPrefix(strings.ToUpper(line), "USE ") {
-			dbName := strings.Trim(strings.TrimPrefix(line, line[:4]), " ;`'")
-			dbName = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "USE"), "use"))
+			dbName := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "USE"), "use"))
 			dbName = strings.Trim(dbName, " ;`'")
 			dbName = strings.ToLower(dbName)
 			if _, exists := sr.Databases[dbName]; !exists {
