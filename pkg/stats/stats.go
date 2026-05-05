@@ -141,12 +141,11 @@ func (s *Statistics) PrintStats() {
 		fmt.Printf("--------\n")
 		fmt.Printf("Total operations: %d\n", totalOps)
 		fmt.Printf("Total rows affected: %d\n", totalRows)
-		fmt.Printf("Average rows per operation: %.1f\n", float64(totalRows)/float64(totalOps))
+		if totalOps > 0 {
+			fmt.Printf("Average rows per operation: %.1f\n", float64(totalRows)/float64(totalOps))
+		}
 		fmt.Printf("Operations per second: %.2f\n", float64(totalOps)/duration.Seconds())
 	}
 }
 
-// Alias for PrintStats to maintain backward compatibility
-func (s *Statistics) Print() {
-	s.PrintStats()
-}
+

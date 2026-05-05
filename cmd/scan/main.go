@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -69,6 +70,26 @@ type FuzzySearchStats struct {
 	ProcessingTime time.Duration                 `json:"processing_time"`
 }
 
+// AggregateConfig holds configuration for aggregate processing
+type AggregateConfig struct {
+	Threshold      int
+	SchemaFile     string
+	SchemaName     string
+	TableName      string
+	FilterCol      string
+	FilterVal      string
+	TimeCol        string
+	CategoryCol    string
+	ExtractCols    []string
+	IncludeNulls   bool
+	SampleSize     int
+	ValidateSchema bool
+	Since          time.Time
+	Until          time.Time
+	UseSince       bool
+	UseUntil       bool
+}
+
 // progress counters
 var (
 	filesTotal            int64
@@ -87,6 +108,7 @@ var (
 	listColumns    = flag.Bool("listColumns", false, "list all available columns in the specified table and exit")
 	prettyJson     = flag.Bool("prettyJson", false, "output JSON in pretty-printed format")
 	autoDiscover   = flag.Bool("autoDiscover", false, "automatically discover schema from DDL statements in binlogs")
+	binlogPattern  = flag.String("binlogPattern", "", "pattern to match binlog files (empty = match common patterns like mysql-bin*, binlog*)")
 	// Fuzzy search flags
 	fuzzySearch     = flag.Bool("fuzzySearch", false, "enable fuzzy search for SQL keywords")
 	searchKeywords  = flag.String("searchKeywords", "select,insert,update,delete,alter,drop", "comma-separated list of SQL keywords to search for")
@@ -116,6 +138,71 @@ func eventName(et replication.EventType) string {
 	default:
 		return fmt.Sprintf("TYPE_%d", et)
 	}
+}
+
+// isBinlogFile checks if a filename matches binlog patterns
+func isBinlogFile(filename string, customPattern string) bool {
+	if customPattern != "" {
+		// Use custom pattern - simple substring match for now
+		// Could be enhanced to support glob patterns or regex
+		return strings.Contains(filename, customPattern)
+	}
+	
+	// Default patterns for common binlog file naming conventions
+	base := filepath.Base(filename)
+	return strings.HasPrefix(base, "mysql-bin") ||
+		strings.HasPrefix(base, "binlog") ||
+		strings.HasPrefix(base, "mariadb-bin") ||
+		strings.HasPrefix(base, "relay-log") ||
+		strings.Contains(base, ".bin") && !strings.HasSuffix(base, ".bin.gz")
+}
+
+// autoDiscoverSchema scans binlog files for DDL statements and builds schema registry
+func autoDiscoverSchema(binfiles []string) (*schema.SchemaRegistry, error) {
+	sr := schema.NewSchemaRegistry()
+	var ddlStatements []string
+	
+	fmt.Fprintf(os.Stderr, "Auto-discovering schema from %d binlog files...\n", len(binfiles))
+	
+	for _, binfile := range binfiles {
+		p := replication.NewBinlogParser()
+		err := p.ParseFile(binfile, 4, func(e *replication.BinlogEvent) error {
+			if q, ok := e.Event.(*replication.QueryEvent); ok {
+				query := string(q.Query)
+				queryUpper := strings.ToUpper(strings.TrimSpace(query))
+				
+				// Capture CREATE TABLE and ALTER TABLE statements
+				if strings.HasPrefix(queryUpper, "CREATE TABLE") || 
+				   strings.HasPrefix(queryUpper, "ALTER TABLE") ||
+				   strings.HasPrefix(queryUpper, "USE ") {
+					ddlStatements = append(ddlStatements, query)
+				}
+			}
+			return nil
+		})
+		
+		if err != nil {
+			return nil, fmt.Errorf("error parsing %s for DDL: %v", binfile, err)
+		}
+	}
+	
+	fmt.Fprintf(os.Stderr, "Found %d DDL statements\n", len(ddlStatements))
+	
+	if len(ddlStatements) > 0 {
+		if err := sr.LoadFromDDL(ddlStatements); err != nil {
+			return nil, fmt.Errorf("error loading DDL: %v", err)
+		}
+		
+		// Print summary of discovered schema
+		dbCount := len(sr.Databases)
+		tableCount := 0
+		for _, db := range sr.Databases {
+			tableCount += len(db.Tables)
+		}
+		fmt.Fprintf(os.Stderr, "Discovered %d databases and %d tables\n", dbCount, tableCount)
+	}
+	
+	return sr, nil
 }
 
 func processFile(binfile string, threshold int, out chan<- LargeEvent) error {
@@ -155,24 +242,7 @@ func processFile(binfile string, threshold int, out chan<- LargeEvent) error {
 }
 
 // processFileAggregate parses binlog and aggregates table inserts by minute with enhanced metadata
-func processFileAggregate(binfile string, cfg struct {
-	Threshold      int
-	SchemaFile     string
-	SchemaName     string
-	TableName      string
-	FilterCol      string
-	FilterVal      string
-	TimeCol        string
-	CategoryCol    string
-	ExtractCols    []string
-	IncludeNulls   bool
-	SampleSize     int
-	ValidateSchema bool
-	Since          time.Time
-	Until          time.Time
-	UseSince       bool
-	UseUntil       bool
-}, agg map[string]map[string]*AggregationRecord, aggMutex *sync.Mutex, preloadedSchema *schema.SchemaRegistry) error {
+func processFileAggregate(binfile string, cfg AggregateConfig, agg map[string]map[string]*AggregationRecord, aggMutex *sync.Mutex, preloadedSchema *schema.SchemaRegistry) error {
 	// Load schema registry
 	var sr *schema.SchemaRegistry
 	if preloadedSchema != nil {
@@ -353,9 +423,8 @@ func processFileAggregate(binfile string, cfg struct {
 		return nil
 	})
 }
-func processFileFuzzySearch(binfile string, keywords []string, caseInsensitive bool, maxMatches int, results map[string]*FuzzySearchResult, resultsMutex *sync.Mutex) error {
+func processFileFuzzySearch(binfile string, keywords []string, caseInsensitive bool, maxMatches int, results map[string]*FuzzySearchResult, resultsMutex *sync.Mutex, globalMatchCount *int64) error {
 	p := replication.NewBinlogParser()
-	matchCount := 0
 
 	return p.ParseFile(binfile, 4, func(e *replication.BinlogEvent) error {
 		atomic.AddInt64(&eventsProcessedGlobal, 1)
@@ -395,8 +464,8 @@ func processFileFuzzySearch(binfile string, keywords []string, caseInsensitive b
 					// Increment count
 					results[keyword].Count++
 
-					// Add match details if showing matches and under limit
-					if *showMatches && matchCount < maxMatches {
+					// Add match details if showing matches and under global limit
+					if *showMatches && atomic.LoadInt64(globalMatchCount) < int64(maxMatches) {
 						// Extract context around the keyword
 						context := extractContext(searchQuery, searchTerm, 100)
 
@@ -409,7 +478,7 @@ func processFileFuzzySearch(binfile string, keywords []string, caseInsensitive b
 						}
 
 						results[keyword].Matches = append(results[keyword].Matches, match)
-						matchCount++
+						atomic.AddInt64(globalMatchCount, 1)
 					}
 
 					resultsMutex.Unlock()
@@ -456,6 +525,10 @@ func truncateString(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
+	if maxLen < 3 {
+		// If maxLen is too small for "...", just truncate
+		return s[:maxLen]
+	}
 	return s[:maxLen-3] + "..."
 }
 
@@ -490,12 +563,48 @@ func main() {
 		os.Exit(0)
 	}
 
+	// gather files early if autoDiscover is enabled
+	var files []string
+	if *autoDiscover {
+		files = make([]string, 0)
+		err := filepath.WalkDir(*scanDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() {
+				return nil
+			}
+			if isBinlogFile(path, *binlogPattern) {
+				files = append(files, path)
+			}
+			return nil
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error listing files: %v\n", err)
+			os.Exit(1)
+		}
+		if len(files) == 0 {
+			fmt.Fprintf(os.Stderr, "no binlog files found in %s\n", *scanDir)
+			os.Exit(0)
+		}
+	}
+
 	// Handle schema operations (listColumns or validateSchema) before file processing
 	var validatedSchema *schema.SchemaRegistry
-	if (*listColumns || *validateSchema) && !*autoDiscover {
+	if *listColumns || *validateSchema {
 		fmt.Fprintf(os.Stderr, "Validating schema and column configuration...\n")
 		sr := schema.NewSchemaRegistry()
-		if *schemaFile != "" {
+		
+		if *autoDiscover {
+			// Auto-discover schema from binlog files
+			fmt.Fprintf(os.Stderr, "Using auto-discovery mode...\n")
+			discoveredSchema, err := autoDiscoverSchema(files)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Schema auto-discovery failed: %v\n", err)
+				os.Exit(1)
+			}
+			sr = discoveredSchema
+		} else if *schemaFile != "" {
 			fmt.Fprintf(os.Stderr, "Loading schema file: %s\n", *schemaFile)
 			if err := sr.LoadFromFile(*schemaFile); err != nil {
 				fmt.Fprintf(os.Stderr, "Schema validation failed: %v\n", err)
@@ -503,7 +612,17 @@ func main() {
 			}
 			fmt.Fprintf(os.Stderr, "Schema file loaded successfully\n")
 		} else {
-			fmt.Fprintf(os.Stderr, "Error: schemaFile is required for -listColumns or -validateSchema\n")
+			fmt.Fprintf(os.Stderr, "Error: schemaFile is required for -listColumns or -validateSchema (or use -autoDiscover)\n")
+			os.Exit(1)
+		}
+
+		// Validate that schemaName and tableName are provided
+		if *schemaName == "" || *tableName == "" {
+			fmt.Fprintf(os.Stderr, "Error: -schemaName and -tableName are required for -listColumns or -validateSchema\n")
+			fmt.Fprintf(os.Stderr, "\nAvailable schemas:\n")
+			for dbName := range sr.Databases {
+				fmt.Fprintf(os.Stderr, "  - %s\n", dbName)
+			}
 			os.Exit(1)
 		}
 
@@ -512,6 +631,19 @@ func main() {
 		tbl := sr.GetTableInfo(*schemaName, *tableName)
 		if tbl == nil {
 			fmt.Fprintf(os.Stderr, "Schema validation failed: table '%s.%s' not found in schema\n", *schemaName, *tableName)
+			
+			// Show available tables in the requested schema
+			if db, exists := sr.Databases[*schemaName]; exists {
+				fmt.Fprintf(os.Stderr, "\nAvailable tables in schema '%s':\n", *schemaName)
+				for tableName := range db.Tables {
+					fmt.Fprintf(os.Stderr, "  - %s\n", tableName)
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "\nSchema '%s' not found. Available schemas:\n", *schemaName)
+				for dbName := range sr.Databases {
+					fmt.Fprintf(os.Stderr, "  - %s\n", dbName)
+				}
+			}
 			os.Exit(1)
 		}
 		fmt.Fprintf(os.Stderr, "Table found with %d columns\n", len(tbl.Columns))
@@ -524,6 +656,8 @@ func main() {
 			}
 			fmt.Fprintf(os.Stderr, "\nTo extract all columns, use:\n")
 			fmt.Fprintf(os.Stderr, "  -extractCols \"%s\"\n", strings.Join(getColumnNames(tbl.Columns), ","))
+			fmt.Fprintf(os.Stderr, "\nNote: The -extractCols flag is used during actual processing (-aggregate),\n")
+			fmt.Fprintf(os.Stderr, "      not with -listColumns. Don't include -extractCols when using -listColumns.\n")
 			os.Exit(0)
 		}
 
@@ -565,8 +699,6 @@ func main() {
 				}
 			}
 
-			fmt.Fprintf(os.Stderr, "Debug: requiredCols=%v, missingCols=%v, tableCols=%v\n", requiredCols, missingCols, len(tbl.Columns))
-
 			if len(missingCols) > 0 {
 				fmt.Fprintf(os.Stderr, "Schema validation failed: missing columns in table '%s.%s': %v\n", *schemaName, *tableName, missingCols)
 				fmt.Fprintf(os.Stderr, "\nAvailable columns in table '%s.%s':\n", *schemaName, *tableName)
@@ -585,29 +717,30 @@ func main() {
 		validatedSchema = sr
 	}
 
-	// gather files
-	files := make([]string, 0)
-	err := filepath.WalkDir(*scanDir, func(path string, d os.DirEntry, err error) error {
+	// gather files (if not already done for autoDiscover)
+	if files == nil {
+		files = make([]string, 0)
+		err := filepath.WalkDir(*scanDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() {
+				return nil
+			}
+			if isBinlogFile(path, *binlogPattern) {
+				files = append(files, path)
+			}
+			return nil
+		})
 		if err != nil {
-			return nil
+			fmt.Fprintf(os.Stderr, "error listing files: %v\n", err)
+			os.Exit(1)
 		}
-		if d.IsDir() {
-			return nil
-		}
-		base := filepath.Base(path)
-		if strings.Contains(base, "mysql-bin") || strings.HasPrefix(base, "mysql-bin") {
-			files = append(files, path)
-		}
-		return nil
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error listing files: %v\n", err)
-		os.Exit(1)
-	}
 
-	if len(files) == 0 {
-		fmt.Fprintf(os.Stderr, "no binlog files found in %s\n", *scanDir)
-		os.Exit(0)
+		if len(files) == 0 {
+			fmt.Fprintf(os.Stderr, "no binlog files found in %s\n", *scanDir)
+			os.Exit(0)
+		}
 	}
 	if *aggregate {
 		// parse since/until
@@ -663,41 +796,24 @@ func main() {
 		var wg sync.WaitGroup
 		sem := make(chan struct{}, *parallel)
 
-		cfgType := struct {
-			Threshold      int
-			SchemaFile     string
-			SchemaName     string
-			TableName      string
-			FilterCol      string
-			FilterVal      string
-			TimeCol        string
-			CategoryCol    string
-			ExtractCols    []string
-			IncludeNulls   bool
-			SampleSize     int
-			ValidateSchema bool
-			Since          time.Time
-			Until          time.Time
-			UseSince       bool
-			UseUntil       bool
-		}{}
-
-		cfgType.Threshold = *threshold
-		cfgType.SchemaFile = *schemaFile
-		cfgType.SchemaName = *schemaName
-		cfgType.TableName = *tableName
-		cfgType.FilterCol = *filterCol
-		cfgType.FilterVal = *filterVal
-		cfgType.TimeCol = *timeCol
-		cfgType.CategoryCol = *categoryCol
-		cfgType.ExtractCols = extractColsList
-		cfgType.IncludeNulls = *includeNulls
-		cfgType.SampleSize = *sampleSize
-		cfgType.ValidateSchema = *validateSchema
-		cfgType.Since = since
-		cfgType.Until = until
-		cfgType.UseSince = useSince
-		cfgType.UseUntil = useUntil
+		cfgType := AggregateConfig{
+			Threshold:      *threshold,
+			SchemaFile:     *schemaFile,
+			SchemaName:     *schemaName,
+			TableName:      *tableName,
+			FilterCol:      *filterCol,
+			FilterVal:      *filterVal,
+			TimeCol:        *timeCol,
+			CategoryCol:    *categoryCol,
+			ExtractCols:    extractColsList,
+			IncludeNulls:   *includeNulls,
+			SampleSize:     *sampleSize,
+			ValidateSchema: *validateSchema,
+			Since:          since,
+			Until:          until,
+			UseSince:       useSince,
+			UseUntil:       useUntil,
+		}
 
 		// gather files
 		atomic.StoreInt64(&filesTotal, int64(len(files)))
@@ -802,14 +918,10 @@ func main() {
 			for cat, count := range categoryCounts {
 				stats = append(stats, categoryStat{cat, count})
 			}
-			// Simple sort - in production you'd use sort.Slice
-			for i := 0; i < len(stats)-1; i++ {
-				for j := i + 1; j < len(stats); j++ {
-					if stats[i].count < stats[j].count {
-						stats[i], stats[j] = stats[j], stats[i]
-					}
-				}
-			}
+			// Sort by count descending
+			sort.Slice(stats, func(i, j int) bool {
+				return stats[i].count > stats[j].count
+			})
 			for i, stat := range stats {
 				if i >= 10 { // Show top 10
 					break
@@ -840,6 +952,7 @@ func main() {
 		// Initialize results
 		fuzzyResults := make(map[string]*FuzzySearchResult)
 		var resultsMutex sync.Mutex
+		var globalMatchCount int64
 		var wg sync.WaitGroup
 		sem := make(chan struct{}, *parallel)
 
@@ -873,7 +986,7 @@ func main() {
 				defer wg.Done()
 				defer func() { <-sem }()
 				currentFile.Store(fn)
-				if err := processFileFuzzySearch(fn, keywords, *caseInsensitive, *maxMatches, fuzzyResults, &resultsMutex); err != nil {
+				if err := processFileFuzzySearch(fn, keywords, *caseInsensitive, *maxMatches, fuzzyResults, &resultsMutex, &globalMatchCount); err != nil {
 					fmt.Fprintf(os.Stderr, "error parsing %s: %v\n", fn, err)
 				}
 				atomic.AddInt64(&filesDone, 1)
@@ -896,14 +1009,10 @@ func main() {
 			sortedKeywords = append(sortedKeywords, keywordCount{keyword, result.Count})
 		}
 
-		// Simple sort by count (descending)
-		for i := 0; i < len(sortedKeywords)-1; i++ {
-			for j := i + 1; j < len(sortedKeywords); j++ {
-				if sortedKeywords[i].count < sortedKeywords[j].count {
-					sortedKeywords[i], sortedKeywords[j] = sortedKeywords[j], sortedKeywords[i]
-				}
-			}
-		}
+		// Sort by count descending
+		sort.Slice(sortedKeywords, func(i, j int) bool {
+			return sortedKeywords[i].count > sortedKeywords[j].count
+		})
 
 		// Output summary
 		fmt.Fprintf(os.Stderr, "\n=== Fuzzy Search Results ===\n")
