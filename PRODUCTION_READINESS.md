@@ -50,16 +50,16 @@ No git tags, no release workflow, no `-version` flag in the binaries. Recommend:
 
 ## P4 — Repo hygiene & docs
 
-### 12. Missing LICENSE file
+### 12. ✅ DONE (1db2e9f) — Missing LICENSE file
 README says "MIT License. See LICENSE file for details." — there is no LICENSE file. Add one (legally required for the stated license to apply).
 
-### 13. Development-artifact docs in repo root
+### 13. ✅ DONE (e365fae) — Development-artifact docs in repo root
 `PLAN.md`, `COMPLETION_SUMMARY.md`, `TASKS_COMPLETION_2026-05-05.md` are internal work logs, and a local `tags` ctags file sits in the tree (ignored, but stale). Move the useful content into `docs/` or delete; keep the root to README + LICENSE + Makefile.
 
-### 14. Makefile gaps
+### 14. ✅ DONE (af61da7) — Makefile gaps
 No `test`, `fmt`, `lint`, or `vet` targets; `install` is an alias for `build` and doesn't install anywhere. Add standard targets so CI and humans run the same commands.
 
-### 15. README accuracy pass
+### 15. ✅ DONE (9bf3b46) — README accuracy pass
 After the above: document exit codes, the `-version` flag, actual install instructions (`go install github.com/ChaosHour/go-parse/cmd@latest` won't produce a binary named `go-parse` — worth restructuring to `cmd/go-parse/` and `cmd/go-parse-scan/`), and remove/repoint the license claim until LICENSE exists.
 
 ## P5 — Nice to have (not blocking)
