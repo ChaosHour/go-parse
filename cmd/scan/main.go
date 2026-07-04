@@ -95,8 +95,18 @@ var (
 	filesTotal            int64
 	filesDone             int64
 	eventsProcessedGlobal int64
+	parseFailures         int64
 	currentFile           atomic.Value // string
 )
+
+// exitOnParseFailures exits non-zero if any file failed to parse, so
+// callers (scripts, cron) can detect partial results.
+func exitOnParseFailures() {
+	if n := atomic.LoadInt64(&parseFailures); n > 0 {
+		fmt.Fprintf(os.Stderr, "completed with %d file parse failure(s)\n", n)
+		os.Exit(1)
+	}
+}
 
 // Add new flags for enhanced functionality
 var (
@@ -845,6 +855,7 @@ func main() {
 				currentFile.Store(fn)
 				if err := processFileAggregate(fn, cfgType, agg, &aggMutex, validatedSchema); err != nil {
 					fmt.Fprintf(os.Stderr, "error parsing %s: %v\n", fn, err)
+					atomic.AddInt64(&parseFailures, 1)
 				}
 				atomic.AddInt64(&filesDone, 1)
 			}(f)
@@ -930,6 +941,7 @@ func main() {
 			}
 		}
 
+		exitOnParseFailures()
 		return
 	}
 
@@ -988,6 +1000,7 @@ func main() {
 				currentFile.Store(fn)
 				if err := processFileFuzzySearch(fn, keywords, *caseInsensitive, *maxMatches, fuzzyResults, &resultsMutex, &globalMatchCount); err != nil {
 					fmt.Fprintf(os.Stderr, "error parsing %s: %v\n", fn, err)
+					atomic.AddInt64(&parseFailures, 1)
 				}
 				atomic.AddInt64(&filesDone, 1)
 			}(f)
@@ -1051,6 +1064,7 @@ func main() {
 			}
 		}
 
+		exitOnParseFailures()
 		return
 	}
 
@@ -1098,6 +1112,7 @@ func main() {
 			currentFile.Store(fn)
 			if err := processFile(fn, *threshold, out); err != nil {
 				fmt.Fprintf(os.Stderr, "error parsing %s: %v\n", fn, err)
+				atomic.AddInt64(&parseFailures, 1)
 			}
 			atomic.AddInt64(&filesDone, 1)
 		}(f)
@@ -1107,4 +1122,5 @@ func main() {
 	close(stopProgress)
 	close(out)
 	<-printerDone
+	exitOnParseFailures()
 }

@@ -704,9 +704,11 @@ func main() {
 		return nil
 	})
 
+	parseFailed := false
 	if err != nil {
 		if !errors.Is(err, errFoundNextEvent) {
-			fmt.Printf("Error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			parseFailed = true
 		} else {
 			fmt.Println(err.Error())
 		}
@@ -719,6 +721,10 @@ func main() {
 			schemaRegistry.PrintWarnings()
 		}
 	}
+
+	if parseFailed {
+		os.Exit(1)
+	}
 }
 
 func listAllLogPositions(binlogFile string) {
@@ -729,6 +735,7 @@ func listAllLogPositions(binlogFile string) {
 	})
 
 	if err != nil {
-		fmt.Println(err.Error())
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
 	}
 }
