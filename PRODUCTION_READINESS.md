@@ -45,7 +45,7 @@ Add `govulncheck ./...` to CI and enable Dependabot (or Renovate) for Go modules
 ### 10. ✅ DONE (939ddc1) — CI is build-only
 Add steps: `gofmt` check, `go vet`, `staticcheck`, `govulncheck`, and run tests *before* building artifacts (tests currently run last). Add module/build caching.
 
-### 11. No releases or versioning
+### 11. ✅ DONE (557faad) — No releases or versioning
 No git tags, no release workflow, no `-version` flag in the binaries. Recommend: goreleaser (or a release workflow) producing linux/darwin × amd64/arm64 binaries on tag push, plus an embedded version via `-ldflags "-X main.version=..."`. Current CI only builds amd64 — no arm64 (Apple Silicon / Graviton).
 
 ## P4 — Repo hygiene & docs
