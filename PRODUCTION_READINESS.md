@@ -39,10 +39,10 @@ Add `govulncheck ./...` to CI and enable Dependabot (or Renovate) for Go modules
 
 ## P3 — CI/CD & release engineering
 
-### 9. CI Go version mismatch
+### 9. ✅ DONE (939ddc1) — CI Go version mismatch
 `.github/workflows/build.yml` pins Go **1.21**, but `go.mod` declares `go 1.23.2`. Align CI with go.mod (use `go-version-file: go.mod`).
 
-### 10. CI is build-only
+### 10. ✅ DONE (939ddc1) — CI is build-only
 Add steps: `gofmt` check, `go vet`, `staticcheck`, `govulncheck`, and run tests *before* building artifacts (tests currently run last). Add module/build caching.
 
 ### 11. No releases or versioning
