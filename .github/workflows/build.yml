@@ -75,8 +75,8 @@ jobs:
         GOARCH: ${{ matrix.goarch }}
         CGO_ENABLED: '0'
       run: |
-        go build -trimpath -v -o bin/go-parse-${GOOS}-${GOARCH} ./cmd
-        go build -trimpath -v -o bin/go-parse-scan-${GOOS}-${GOARCH} ./cmd/scan
+        go build -trimpath -v -o bin/go-parse-${GOOS}-${GOARCH} ./cmd/go-parse
+        go build -trimpath -v -o bin/go-parse-scan-${GOOS}-${GOARCH} ./cmd/go-parse-scan
 
     - name: Upload go-parse binary
       uses: actions/upload-artifact@v4

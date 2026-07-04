@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+
+    - name: Test
+      run: go test -race ./...
+
+    - name: Build release archives
+      env:
+        CGO_ENABLED: '0'
+      run: |
+        VERSION="${GITHUB_REF_NAME}"
+        LDFLAGS="-s -w -X github.com/ChaosHour/go-parse/pkg/version.value=${VERSION}"
+        mkdir -p dist
+        for os in linux darwin; do
+          for arch in amd64 arm64; do
+            out="dist/${os}_${arch}"
+            mkdir -p "$out"
+            GOOS=$os GOARCH=$arch go build -trimpath -ldflags "$LDFLAGS" -o "$out/go-parse" ./cmd/go-parse
+            GOOS=$os GOARCH=$arch go build -trimpath -ldflags "$LDFLAGS" -o "$out/go-parse-scan" ./cmd/go-parse-scan
+            tar -czf "dist/go-parse_${VERSION}_${os}_${arch}.tar.gz" -C "$out" go-parse go-parse-scan
+          done
+        done
+        (cd dist && sha256sum *.tar.gz > checksums.txt)
+
+    - name: Create GitHub release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          dist/*.tar.gz
+          dist/checksums.txt
+        generate_release_notes: true

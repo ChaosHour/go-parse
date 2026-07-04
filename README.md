@@ -60,6 +60,7 @@ This creates:
 -searchKeywords string Comma-separated list of SQL keywords to search for
                      (default "select,insert,update,delete,alter,drop")
 -caseInsensitive    Perform case-insensitive keyword search (default true)
+-version            Print version and exit
 ```
 
 ### Examples
@@ -146,6 +147,7 @@ This creates:
 -maxMatches int     Maximum number of matches to display (default 100)
 -since string       Only include events on/after this timestamp
 -until string       Only include events before this timestamp
+-version            Print version and exit
 ```
 
 ### go-parse-scan Examples
@@ -257,10 +259,10 @@ make clean
 
 ```bash
 # Build main parser
-go build -o bin/go-parse ./cmd
+go build -o bin/go-parse ./cmd/go-parse
 
 # Build scanner
-go build -o bin/go-parse-scan ./cmd/scan
+go build -o bin/go-parse-scan ./cmd/go-parse-scan
 ```
 
 ## Dependencies

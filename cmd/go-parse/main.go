@@ -14,6 +14,7 @@ import (
 
 	"github.com/ChaosHour/go-parse/pkg/schema"
 	"github.com/ChaosHour/go-parse/pkg/stats" // Updated import path
+	"github.com/ChaosHour/go-parse/pkg/version"
 	"github.com/go-mysql-org/go-mysql/replication"
 )
 
@@ -260,6 +261,7 @@ var (
 	fuzzySearch     = flag.Bool("fuzzySearch", false, "enable fuzzy search for SQL keywords")
 	searchKeywords  = flag.String("searchKeywords", "select,insert,update,delete,alter,drop", "comma-separated list of SQL keywords to search for")
 	caseInsensitive = flag.Bool("caseInsensitive", true, "perform case-insensitive keyword search")
+	showVersion     = flag.Bool("version", false, "print version and exit")
 )
 
 // Add this function for binlog validation
@@ -316,6 +318,11 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("go-parse %s\n", version.String())
+		return
+	}
 
 	if *binlogFile == "" {
 		flag.Usage()

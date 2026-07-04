@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ChaosHour/go-parse/pkg/schema"
+	"github.com/ChaosHour/go-parse/pkg/version"
 	"github.com/go-mysql-org/go-mysql/replication"
 )
 
@@ -149,6 +150,7 @@ var (
 	caseInsensitive = flag.Bool("caseInsensitive", true, "perform case-insensitive keyword search")
 	showMatches     = flag.Bool("showMatches", false, "show matching statements with context")
 	maxMatches      = flag.Int("maxMatches", 100, "maximum number of matches to display")
+	showVersion     = flag.Bool("version", false, "print version and exit")
 )
 
 func createEncoder() *json.Encoder {
@@ -595,6 +597,11 @@ func main() {
 	sinceStr := flag.String("since", "", "only include events on/after this timestamp (RFC3339 or '2006-01-02 15:04')")
 	untilStr := flag.String("until", "", "only include events before this timestamp (RFC3339 or '2006-01-02 15:04')")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("go-parse-scan %s\n", version.String())
+		return
+	}
 
 	// Show help if no arguments provided
 	if flag.NFlag() == 0 && flag.NArg() == 0 {
