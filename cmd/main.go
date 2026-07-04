@@ -53,17 +53,17 @@ var mysqlTypeNames = map[byte]string{
 }
 
 type EventRecord struct {
-	EventType       string                 `json:"event_type"`
-	Timestamp       string                 `json:"timestamp"`
-	ThreadID        int64                  `json:"thread_id,omitempty"`
-	ServerID        uint32                 `json:"server_id"`
-	Schema          string                 `json:"schema"`
-	Table           string                 `json:"table"`
-	RowsAffected    int                    `json:"rows_affected"`
-	QueryType       string                 `json:"query_type,omitempty"`
-	ExtractedValues map[string]interface{} `json:"extracted_values,omitempty"`
-	TransactionID   string                 `json:"transaction_id,omitempty"`
-	Query           string                 `json:"query,omitempty"`
+	EventType       string         `json:"event_type"`
+	Timestamp       string         `json:"timestamp"`
+	ThreadID        int64          `json:"thread_id,omitempty"`
+	ServerID        uint32         `json:"server_id"`
+	Schema          string         `json:"schema"`
+	Table           string         `json:"table"`
+	RowsAffected    int            `json:"rows_affected"`
+	QueryType       string         `json:"query_type,omitempty"`
+	ExtractedValues map[string]any `json:"extracted_values,omitempty"`
+	TransactionID   string         `json:"transaction_id,omitempty"`
+	Query           string         `json:"query,omitempty"`
 }
 
 // Helper function to extract thread_id from query status variables
@@ -138,7 +138,7 @@ func decodeAndDisplayRowData(rowsEvent *replication.RowsEvent, tblInfo *schema.T
 }
 
 // Helper function to display individual row data
-func displayRowData(row []interface{}, tblInfo *schema.Table, rowNum int) {
+func displayRowData(row []any, tblInfo *schema.Table, rowNum int) {
 	fmt.Printf("\n--- Row %d ---\n", rowNum)
 
 	if tblInfo == nil {
@@ -158,7 +158,7 @@ func displayRowData(row []interface{}, tblInfo *schema.Table, rowNum int) {
 }
 
 // Helper function to format column values nicely
-func formatColumnValue(value interface{}) string {
+func formatColumnValue(value any) string {
 	if value == nil {
 		return "NULL"
 	}
@@ -200,8 +200,8 @@ func analyzeQueryType(query string) string {
 }
 
 // Helper function to extract column values from row
-func extractColumnValues(rowSlice []interface{}, tblInfo *schema.Table, extractCols []string) map[string]interface{} {
-	values := make(map[string]interface{})
+func extractColumnValues(rowSlice []any, tblInfo *schema.Table, extractCols []string) map[string]any {
+	values := make(map[string]any)
 	if tblInfo == nil || len(extractCols) == 0 {
 		return values
 	}
@@ -230,7 +230,7 @@ func extractColumnValues(rowSlice []interface{}, tblInfo *schema.Table, extractC
 	return values
 }
 
-func getAfterImageRow(rows [][]interface{}) []interface{} {
+func getAfterImageRow(rows [][]any) []any {
 	// UPDATE events store rows as before/after pairs. Prefer the first after-image.
 	if len(rows) > 1 {
 		return rows[1]
@@ -448,7 +448,7 @@ func main() {
 						// Add fuzzy search metadata
 						if *jsonOutput {
 							// Create a custom JSON structure for fuzzy search results
-							fuzzyRecord := map[string]interface{}{
+							fuzzyRecord := map[string]any{
 								"event_type":      "FUZZY_SEARCH_MATCH",
 								"timestamp":       eventTime.Format(time.RFC3339),
 								"thread_id":       extractThreadId(lastQuery),
@@ -575,7 +575,7 @@ func main() {
 
 					if *jsonOutput {
 						// Extract values from first row (for INSERT events)
-						var extractedValues map[string]interface{}
+						var extractedValues map[string]any
 						if len(rowsEvent.Rows) > 0 && len(extractColsList) > 0 {
 							extractedValues = extractColumnValues(rowsEvent.Rows[0], tblInfo, extractColsList)
 						}
@@ -619,7 +619,7 @@ func main() {
 
 					if *jsonOutput {
 						// For UPDATE, extract from the first "after" row image.
-						var extractedValues map[string]interface{}
+						var extractedValues map[string]any
 						if afterRow := getAfterImageRow(rowsEvent.Rows); afterRow != nil && len(extractColsList) > 0 {
 							extractedValues = extractColumnValues(afterRow, tblInfo, extractColsList)
 						}
@@ -637,7 +637,7 @@ func main() {
 							Query:           lastQuery,
 						}
 
-						if err := encoder.Encode(record); err != nil{
+						if err := encoder.Encode(record); err != nil {
 							fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
 						}
 					}
@@ -660,7 +660,7 @@ func main() {
 
 					if *jsonOutput {
 						// For DELETE, extract from the deleted row values
-						var extractedValues map[string]interface{}
+						var extractedValues map[string]any
 						if len(rowsEvent.Rows) > 0 && len(extractColsList) > 0 {
 							extractedValues = extractColumnValues(rowsEvent.Rows[0], tblInfo, extractColsList)
 						}

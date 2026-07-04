@@ -147,5 +147,3 @@ func (s *Statistics) PrintStats() {
 		fmt.Printf("Operations per second: %.2f\n", float64(totalOps)/duration.Seconds())
 	}
 }
-
-

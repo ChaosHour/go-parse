@@ -38,13 +38,13 @@ type LargeEvent struct {
 
 // Enhanced aggregation record with dynamic column extraction
 type AggregationRecord struct {
-	Category      string                 `json:"category"`
-	Minute        string                 `json:"minute"`
-	Date          string                 `json:"date"`
-	Count         int                    `json:"count"`
-	FilterID      string                 `json:"filter_id,omitempty"`
-	ExtractedCols map[string]interface{} `json:"extracted_cols,omitempty"`
-	firstRow      rowRef                 // earliest row seen; source of ExtractedCols
+	Category      string         `json:"category"`
+	Minute        string         `json:"minute"`
+	Date          string         `json:"date"`
+	Count         int            `json:"count"`
+	FilterID      string         `json:"filter_id,omitempty"`
+	ExtractedCols map[string]any `json:"extracted_cols,omitempty"`
+	firstRow      rowRef         // earliest row seen; source of ExtractedCols
 }
 
 // rowRef identifies a row's position in the total order of scanned rows,
@@ -181,7 +181,7 @@ func isBinlogFile(filename string, customPattern string) bool {
 		// Could be enhanced to support glob patterns or regex
 		return strings.Contains(filename, customPattern)
 	}
-	
+
 	// Default patterns for common binlog file naming conventions
 	base := filepath.Base(filename)
 	return strings.HasPrefix(base, "mysql-bin") ||
@@ -195,38 +195,38 @@ func isBinlogFile(filename string, customPattern string) bool {
 func autoDiscoverSchema(binfiles []string) (*schema.SchemaRegistry, error) {
 	sr := schema.NewSchemaRegistry()
 	var ddlStatements []string
-	
+
 	fmt.Fprintf(os.Stderr, "Auto-discovering schema from %d binlog files...\n", len(binfiles))
-	
+
 	for _, binfile := range binfiles {
 		p := replication.NewBinlogParser()
 		err := p.ParseFile(binfile, 4, func(e *replication.BinlogEvent) error {
 			if q, ok := e.Event.(*replication.QueryEvent); ok {
 				query := string(q.Query)
 				queryUpper := strings.ToUpper(strings.TrimSpace(query))
-				
+
 				// Capture CREATE TABLE and ALTER TABLE statements
-				if strings.HasPrefix(queryUpper, "CREATE TABLE") || 
-				   strings.HasPrefix(queryUpper, "ALTER TABLE") ||
-				   strings.HasPrefix(queryUpper, "USE ") {
+				if strings.HasPrefix(queryUpper, "CREATE TABLE") ||
+					strings.HasPrefix(queryUpper, "ALTER TABLE") ||
+					strings.HasPrefix(queryUpper, "USE ") {
 					ddlStatements = append(ddlStatements, query)
 				}
 			}
 			return nil
 		})
-		
+
 		if err != nil {
 			return nil, fmt.Errorf("error parsing %s for DDL: %v", binfile, err)
 		}
 	}
-	
+
 	fmt.Fprintf(os.Stderr, "Found %d DDL statements\n", len(ddlStatements))
-	
+
 	if len(ddlStatements) > 0 {
 		if err := sr.LoadFromDDL(ddlStatements); err != nil {
 			return nil, fmt.Errorf("error loading DDL: %v", err)
 		}
-		
+
 		// Print summary of discovered schema
 		dbCount := len(sr.Databases)
 		tableCount := 0
@@ -235,7 +235,7 @@ func autoDiscoverSchema(binfiles []string) (*schema.SchemaRegistry, error) {
 		}
 		fmt.Fprintf(os.Stderr, "Discovered %d databases and %d tables\n", dbCount, tableCount)
 	}
-	
+
 	return sr, nil
 }
 
@@ -440,7 +440,7 @@ func processFileAggregate(binfile string, cfg AggregateConfig, agg map[string]ma
 					// results don't depend on file processing order.
 					if ref.before(record.firstRow) {
 						record.firstRow = ref
-						record.ExtractedCols = make(map[string]interface{}, len(extractedValues))
+						record.ExtractedCols = make(map[string]any, len(extractedValues))
 						for colName, val := range extractedValues {
 							record.ExtractedCols[colName] = val
 						}
@@ -452,7 +452,7 @@ func processFileAggregate(binfile string, cfg AggregateConfig, agg map[string]ma
 						Minute:        minute,
 						Count:         1,
 						FilterID:      cfg.FilterVal,
-						ExtractedCols: make(map[string]interface{}),
+						ExtractedCols: make(map[string]any),
 						firstRow:      ref,
 					}
 
@@ -543,15 +543,8 @@ func extractContext(query, keyword string, contextLength int) string {
 		return query
 	}
 
-	start := keywordIndex - contextLength/2
-	if start < 0 {
-		start = 0
-	}
-
-	end := keywordIndex + len(keyword) + contextLength/2
-	if end > len(query) {
-		end = len(query)
-	}
+	start := max(keywordIndex-contextLength/2, 0)
+	end := min(keywordIndex+len(keyword)+contextLength/2, len(query))
 
 	context := query[start:end]
 
@@ -640,7 +633,7 @@ func main() {
 	if *listColumns || *validateSchema {
 		fmt.Fprintf(os.Stderr, "Validating schema and column configuration...\n")
 		sr := schema.NewSchemaRegistry()
-		
+
 		if *autoDiscover {
 			// Auto-discover schema from binlog files
 			fmt.Fprintf(os.Stderr, "Using auto-discovery mode...\n")
@@ -677,7 +670,7 @@ func main() {
 		tbl := sr.GetTableInfo(*schemaName, *tableName)
 		if tbl == nil {
 			fmt.Fprintf(os.Stderr, "Schema validation failed: table '%s.%s' not found in schema\n", *schemaName, *tableName)
-			
+
 			// Show available tables in the requested schema
 			if db, exists := sr.Databases[*schemaName]; exists {
 				fmt.Fprintf(os.Stderr, "\nAvailable tables in schema '%s':\n", *schemaName)

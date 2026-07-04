@@ -11,8 +11,8 @@ import (
 func TestGetAfterImageRow(t *testing.T) {
 	cases := []struct {
 		name string
-		rows [][]interface{}
-		want []interface{}
+		rows [][]any
+		want []any
 	}{
 		{
 			name: "empty rows",
@@ -21,18 +21,18 @@ func TestGetAfterImageRow(t *testing.T) {
 		},
 		{
 			name: "single row",
-			rows: [][]interface{}{{1, "hello"}},
-			want: []interface{}{1, "hello"},
+			rows: [][]any{{1, "hello"}},
+			want: []any{1, "hello"},
 		},
 		{
 			name: "before after pair",
-			rows: [][]interface{}{{1, "before"}, {1, "after"}},
-			want: []interface{}{1, "after"},
+			rows: [][]any{{1, "before"}, {1, "after"}},
+			want: []any{1, "after"},
 		},
 		{
 			name: "multiple before/after pairs",
-			rows: [][]interface{}{{1, "before1"}, {1, "after1"}, {2, "before2"}, {2, "after2"}},
-			want: []interface{}{1, "after1"},
+			rows: [][]any{{1, "before1"}, {1, "after1"}, {2, "before2"}, {2, "after2"}},
+			want: []any{1, "after1"},
 		},
 	}
 
@@ -54,14 +54,14 @@ func TestExtractColumnValues(t *testing.T) {
 			{Name: "created_at"},
 		},
 	}
-	row := []interface{}{
+	row := []any{
 		int64(42),
 		[]byte("alice"),
 		time.Date(2026, 5, 3, 14, 0, 0, 0, time.UTC),
 	}
 
 	got := extractColumnValues(row, tblInfo, []string{"id", "name", "created_at", "missing"})
-	want := map[string]interface{}{
+	want := map[string]any{
 		"id":         int64(42),
 		"name":       "alice",
 		"created_at": "2026-05-03 14:00:00",
