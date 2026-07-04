@@ -77,9 +77,10 @@ func (sr *SchemaRegistry) LoadFromFile(filename string) error {
 			continue
 		}
 
-		// Handle USE statements (case-insensitive)
+		// Handle USE statements (case-insensitive): switch the default
+		// database for subsequent unqualified CREATE TABLE statements.
 		if strings.HasPrefix(strings.ToUpper(line), "USE ") {
-			dbName := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "USE"), "use"))
+			dbName := line[len("USE "):]
 			dbName = strings.Trim(dbName, " ;`'")
 			dbName = strings.ToLower(dbName)
 			if _, exists := sr.Databases[dbName]; !exists {
@@ -88,7 +89,7 @@ func (sr *SchemaRegistry) LoadFromFile(filename string) error {
 					Tables: make(map[string]*Table),
 				}
 			}
-			currentDB = sr.Databases[dbName]
+			defaultDBName = dbName
 			continue
 		}
 
