@@ -87,18 +87,18 @@ func TestAutoDiscoverSchemaNonExistentFile(t *testing.T) {
 func TestProcessFileFuzzySearchGlobalMatchLimit(t *testing.T) {
 	// This test verifies that maxMatches is properly enforced globally
 	// across concurrent processing
-	
+
 	results := make(map[string]*FuzzySearchResult)
 	var resultsMutex sync.Mutex
 	var globalMatchCount int64
-	
+
 	// Mock showing matches and set a low limit
 	oldShowMatches := *showMatches
 	*showMatches = true
 	defer func() { *showMatches = oldShowMatches }()
-	
+
 	maxMatches := int64(5)
-	
+
 	// Simulate multiple concurrent matches
 	for i := 0; i < 10; i++ {
 		// Simulate what happens inside processFileFuzzySearch
@@ -111,7 +111,7 @@ func TestProcessFileFuzzySearchGlobalMatchLimit(t *testing.T) {
 			}
 		}
 		results["INSERT"].Count++
-		
+
 		if atomic.LoadInt64(&globalMatchCount) < maxMatches {
 			match := FuzzyMatch{
 				File:     "test.bin",
@@ -123,18 +123,18 @@ func TestProcessFileFuzzySearchGlobalMatchLimit(t *testing.T) {
 		}
 		resultsMutex.Unlock()
 	}
-	
+
 	// Verify the limit was enforced
 	if len(results["INSERT"].Matches) > int(maxMatches) {
 		t.Errorf("Expected at most %d matches, got %d", maxMatches, len(results["INSERT"].Matches))
 	}
-	
+
 	// Verify count still tracked all occurrences
 	if results["INSERT"].Count != 10 {
 		t.Errorf("Expected count of 10, got %d", results["INSERT"].Count)
 	}
-	
-	t.Logf("Verified: Count=%d, Matches stored=%d (limit=%d)", 
+
+	t.Logf("Verified: Count=%d, Matches stored=%d (limit=%d)",
 		results["INSERT"].Count, len(results["INSERT"].Matches), maxMatches)
 }
 

@@ -51,6 +51,43 @@ func TestLoadFromFileParsesTableColumns(t *testing.T) {
 	}
 }
 
+func TestLoadFromFileUseStatementSetsDefaultDatabase(t *testing.T) {
+	tempFile, err := os.CreateTemp("", "schema-use-*.sql")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(tempFile.Name())
+
+	content := "USE `db1`;\n" +
+		"CREATE TABLE t1 (\n" +
+		"  `id` int NOT NULL,\n" +
+		"  PRIMARY KEY (`id`)\n" +
+		");\n" +
+		"use db2;\n" +
+		"CREATE TABLE t2 (\n" +
+		"  `name` varchar(20) NOT NULL\n" +
+		");\n"
+
+	if _, err := tempFile.WriteString(content); err != nil {
+		t.Fatalf("failed to write schema file: %v", err)
+	}
+	if err := tempFile.Close(); err != nil {
+		t.Fatalf("failed to close schema file: %v", err)
+	}
+
+	sr := NewSchemaRegistry()
+	if err := sr.LoadFromFile(tempFile.Name()); err != nil {
+		t.Fatalf("LoadFromFile() error = %v", err)
+	}
+
+	if table := sr.GetTableInfo("db1", "t1"); table == nil {
+		t.Fatal("expected t1 to be attached to db1 via USE statement")
+	}
+	if table := sr.GetTableInfo("db2", "t2"); table == nil {
+		t.Fatal("expected t2 to be attached to db2 after second USE statement")
+	}
+}
+
 func TestGetTableInfoRecordsMissingTableWarning(t *testing.T) {
 	sr := NewSchemaRegistry()
 	sr.Databases["testdb"] = &Database{Name: "testdb", Tables: map[string]*Table{}}

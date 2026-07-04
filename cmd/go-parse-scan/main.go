@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ChaosHour/go-parse/pkg/schema"
+	"github.com/ChaosHour/go-parse/pkg/version"
 	"github.com/go-mysql-org/go-mysql/replication"
 )
 
@@ -38,12 +39,36 @@ type LargeEvent struct {
 
 // Enhanced aggregation record with dynamic column extraction
 type AggregationRecord struct {
-	Category      string                 `json:"category"`
-	Minute        string                 `json:"minute"`
-	Date          string                 `json:"date"`
-	Count         int                    `json:"count"`
-	FilterID      string                 `json:"filter_id,omitempty"`
-	ExtractedCols map[string]interface{} `json:"extracted_cols,omitempty"`
+	Category      string         `json:"category"`
+	Minute        string         `json:"minute"`
+	Date          string         `json:"date"`
+	Count         int            `json:"count"`
+	FilterID      string         `json:"filter_id,omitempty"`
+	ExtractedCols map[string]any `json:"extracted_cols,omitempty"`
+	firstRow      rowRef         // earliest row seen; source of ExtractedCols
+}
+
+// rowRef identifies a row's position in the total order of scanned rows,
+// so aggregation results are deterministic regardless of goroutine
+// scheduling under -parallel.
+type rowRef struct {
+	time time.Time
+	file string
+	pos  uint32
+	row  int
+}
+
+func (a rowRef) before(b rowRef) bool {
+	if !a.time.Equal(b.time) {
+		return a.time.Before(b.time)
+	}
+	if a.file != b.file {
+		return a.file < b.file
+	}
+	if a.pos != b.pos {
+		return a.pos < b.pos
+	}
+	return a.row < b.row
 }
 
 // Fuzzy search result structure
@@ -95,12 +120,22 @@ var (
 	filesTotal            int64
 	filesDone             int64
 	eventsProcessedGlobal int64
+	parseFailures         int64
 	currentFile           atomic.Value // string
 )
 
+// exitOnParseFailures exits non-zero if any file failed to parse, so
+// callers (scripts, cron) can detect partial results.
+func exitOnParseFailures() {
+	if n := atomic.LoadInt64(&parseFailures); n > 0 {
+		fmt.Fprintf(os.Stderr, "completed with %d file parse failure(s)\n", n)
+		os.Exit(1)
+	}
+}
+
 // Add new flags for enhanced functionality
 var (
-	extractCols    = flag.String("extractCols", "", "additional columns to extract (comma-separated)")
+	extractCols    = flag.String("extractCols", "", "additional columns to extract (comma-separated); values come from the earliest row in each category/minute group")
 	includeNulls   = flag.Bool("includeNulls", false, "include records with NULL values in output")
 	showStats      = flag.Bool("showStats", false, "show statistical summary after processing")
 	sampleSize     = flag.Int("sampleSize", 0, "limit output to N records per category (0 = no limit)")
@@ -115,6 +150,7 @@ var (
 	caseInsensitive = flag.Bool("caseInsensitive", true, "perform case-insensitive keyword search")
 	showMatches     = flag.Bool("showMatches", false, "show matching statements with context")
 	maxMatches      = flag.Int("maxMatches", 100, "maximum number of matches to display")
+	showVersion     = flag.Bool("version", false, "print version and exit")
 )
 
 func createEncoder() *json.Encoder {
@@ -147,7 +183,7 @@ func isBinlogFile(filename string, customPattern string) bool {
 		// Could be enhanced to support glob patterns or regex
 		return strings.Contains(filename, customPattern)
 	}
-	
+
 	// Default patterns for common binlog file naming conventions
 	base := filepath.Base(filename)
 	return strings.HasPrefix(base, "mysql-bin") ||
@@ -161,38 +197,38 @@ func isBinlogFile(filename string, customPattern string) bool {
 func autoDiscoverSchema(binfiles []string) (*schema.SchemaRegistry, error) {
 	sr := schema.NewSchemaRegistry()
 	var ddlStatements []string
-	
+
 	fmt.Fprintf(os.Stderr, "Auto-discovering schema from %d binlog files...\n", len(binfiles))
-	
+
 	for _, binfile := range binfiles {
 		p := replication.NewBinlogParser()
 		err := p.ParseFile(binfile, 4, func(e *replication.BinlogEvent) error {
 			if q, ok := e.Event.(*replication.QueryEvent); ok {
 				query := string(q.Query)
 				queryUpper := strings.ToUpper(strings.TrimSpace(query))
-				
+
 				// Capture CREATE TABLE and ALTER TABLE statements
-				if strings.HasPrefix(queryUpper, "CREATE TABLE") || 
-				   strings.HasPrefix(queryUpper, "ALTER TABLE") ||
-				   strings.HasPrefix(queryUpper, "USE ") {
+				if strings.HasPrefix(queryUpper, "CREATE TABLE") ||
+					strings.HasPrefix(queryUpper, "ALTER TABLE") ||
+					strings.HasPrefix(queryUpper, "USE ") {
 					ddlStatements = append(ddlStatements, query)
 				}
 			}
 			return nil
 		})
-		
+
 		if err != nil {
 			return nil, fmt.Errorf("error parsing %s for DDL: %v", binfile, err)
 		}
 	}
-	
+
 	fmt.Fprintf(os.Stderr, "Found %d DDL statements\n", len(ddlStatements))
-	
+
 	if len(ddlStatements) > 0 {
 		if err := sr.LoadFromDDL(ddlStatements); err != nil {
 			return nil, fmt.Errorf("error loading DDL: %v", err)
 		}
-		
+
 		// Print summary of discovered schema
 		dbCount := len(sr.Databases)
 		tableCount := 0
@@ -201,7 +237,7 @@ func autoDiscoverSchema(binfiles []string) (*schema.SchemaRegistry, error) {
 		}
 		fmt.Fprintf(os.Stderr, "Discovered %d databases and %d tables\n", dbCount, tableCount)
 	}
-	
+
 	return sr, nil
 }
 
@@ -394,12 +430,23 @@ func processFileAggregate(binfile string, cfg AggregateConfig, agg map[string]ma
 					}
 				}
 
+				ref := rowRef{time: t, file: binfile, pos: e.Header.LogPos, row: i}
+
 				aggMutex.Lock()
 				if _, ok := agg[category]; !ok {
 					agg[category] = make(map[string]*AggregationRecord)
 				}
 				if record, exists := agg[category][minute]; exists {
 					record.Count++
+					// ExtractedCols always reflects the earliest row, so
+					// results don't depend on file processing order.
+					if ref.before(record.firstRow) {
+						record.firstRow = ref
+						record.ExtractedCols = make(map[string]any, len(extractedValues))
+						for colName, val := range extractedValues {
+							record.ExtractedCols[colName] = val
+						}
+					}
 				} else {
 					// Create new record with extracted values
 					record := &AggregationRecord{
@@ -407,7 +454,8 @@ func processFileAggregate(binfile string, cfg AggregateConfig, agg map[string]ma
 						Minute:        minute,
 						Count:         1,
 						FilterID:      cfg.FilterVal,
-						ExtractedCols: make(map[string]interface{}),
+						ExtractedCols: make(map[string]any),
+						firstRow:      ref,
 					}
 
 					// Add extracted column values to the dynamic map
@@ -497,15 +545,8 @@ func extractContext(query, keyword string, contextLength int) string {
 		return query
 	}
 
-	start := keywordIndex - contextLength/2
-	if start < 0 {
-		start = 0
-	}
-
-	end := keywordIndex + len(keyword) + contextLength/2
-	if end > len(query) {
-		end = len(query)
-	}
+	start := max(keywordIndex-contextLength/2, 0)
+	end := min(keywordIndex+len(keyword)+contextLength/2, len(query))
 
 	context := query[start:end]
 
@@ -557,6 +598,11 @@ func main() {
 	untilStr := flag.String("until", "", "only include events before this timestamp (RFC3339 or '2006-01-02 15:04')")
 	flag.Parse()
 
+	if *showVersion {
+		fmt.Printf("go-parse-scan %s\n", version.String())
+		return
+	}
+
 	// Show help if no arguments provided
 	if flag.NFlag() == 0 && flag.NArg() == 0 {
 		flag.Usage()
@@ -594,7 +640,7 @@ func main() {
 	if *listColumns || *validateSchema {
 		fmt.Fprintf(os.Stderr, "Validating schema and column configuration...\n")
 		sr := schema.NewSchemaRegistry()
-		
+
 		if *autoDiscover {
 			// Auto-discover schema from binlog files
 			fmt.Fprintf(os.Stderr, "Using auto-discovery mode...\n")
@@ -631,7 +677,7 @@ func main() {
 		tbl := sr.GetTableInfo(*schemaName, *tableName)
 		if tbl == nil {
 			fmt.Fprintf(os.Stderr, "Schema validation failed: table '%s.%s' not found in schema\n", *schemaName, *tableName)
-			
+
 			// Show available tables in the requested schema
 			if db, exists := sr.Databases[*schemaName]; exists {
 				fmt.Fprintf(os.Stderr, "\nAvailable tables in schema '%s':\n", *schemaName)
@@ -845,6 +891,7 @@ func main() {
 				currentFile.Store(fn)
 				if err := processFileAggregate(fn, cfgType, agg, &aggMutex, validatedSchema); err != nil {
 					fmt.Fprintf(os.Stderr, "error parsing %s: %v\n", fn, err)
+					atomic.AddInt64(&parseFailures, 1)
 				}
 				atomic.AddInt64(&filesDone, 1)
 			}(f)
@@ -853,19 +900,29 @@ func main() {
 		wg.Wait()
 		close(stopProgress)
 
-		// Emit JSON lines with enhanced metadata
+		// Emit JSON lines with enhanced metadata, sorted by category then
+		// minute so output (and -sampleSize selection) is deterministic.
 		enc := createEncoder()
-		for _, minutes := range agg {
-			// Apply sampling if requested
-			var records []*AggregationRecord
-			for _, record := range minutes {
-				records = append(records, record)
+		categories := make([]string, 0, len(agg))
+		for category := range agg {
+			categories = append(categories, category)
+		}
+		sort.Strings(categories)
+		for _, category := range categories {
+			minutes := agg[category]
+			minuteKeys := make([]string, 0, len(minutes))
+			for minute := range minutes {
+				minuteKeys = append(minuteKeys, minute)
+			}
+			sort.Strings(minuteKeys)
+
+			records := make([]*AggregationRecord, 0, len(minuteKeys))
+			for _, minute := range minuteKeys {
+				records = append(records, minutes[minute])
 			}
 
-			// Apply sampling limit
+			// Apply sampling limit - take first N records in minute order
 			if cfgType.SampleSize > 0 && len(records) > cfgType.SampleSize {
-				// Simple sampling - take first N records
-				// In production, you'd want more sophisticated sampling
 				records = records[:cfgType.SampleSize]
 			}
 
@@ -930,6 +987,7 @@ func main() {
 			}
 		}
 
+		exitOnParseFailures()
 		return
 	}
 
@@ -988,6 +1046,7 @@ func main() {
 				currentFile.Store(fn)
 				if err := processFileFuzzySearch(fn, keywords, *caseInsensitive, *maxMatches, fuzzyResults, &resultsMutex, &globalMatchCount); err != nil {
 					fmt.Fprintf(os.Stderr, "error parsing %s: %v\n", fn, err)
+					atomic.AddInt64(&parseFailures, 1)
 				}
 				atomic.AddInt64(&filesDone, 1)
 			}(f)
@@ -1051,6 +1110,7 @@ func main() {
 			}
 		}
 
+		exitOnParseFailures()
 		return
 	}
 
@@ -1059,10 +1119,14 @@ func main() {
 	sem := make(chan struct{}, *parallel)
 
 	// printer
+	printerDone := make(chan struct{})
 	go func() {
+		defer close(printerDone)
 		enc := createEncoder()
 		for ev := range out {
-			enc.Encode(ev)
+			if err := enc.Encode(ev); err != nil {
+				fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
+			}
 		}
 	}()
 
@@ -1094,6 +1158,7 @@ func main() {
 			currentFile.Store(fn)
 			if err := processFile(fn, *threshold, out); err != nil {
 				fmt.Fprintf(os.Stderr, "error parsing %s: %v\n", fn, err)
+				atomic.AddInt64(&parseFailures, 1)
 			}
 			atomic.AddInt64(&filesDone, 1)
 		}(f)
@@ -1102,4 +1167,6 @@ func main() {
 	wg.Wait()
 	close(stopProgress)
 	close(out)
+	<-printerDone
+	exitOnParseFailures()
 }

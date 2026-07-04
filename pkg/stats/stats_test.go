@@ -31,7 +31,7 @@ func TestRecordOperationUpdatesStats(t *testing.T) {
 	if !insertStats.FirstSeen.Equal(base) {
 		t.Fatalf("expected INSERT first seen %v, got %v", base, insertStats.FirstSeen)
 	}
-	if !insertStats.LastSeen.Equal(base.Add(1*time.Minute)) {
+	if !insertStats.LastSeen.Equal(base.Add(1 * time.Minute)) {
 		t.Fatalf("expected INSERT last seen %v, got %v", base.Add(1*time.Minute), insertStats.LastSeen)
 	}
 
