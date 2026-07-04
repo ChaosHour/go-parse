@@ -20,10 +20,10 @@ Both tools print parse errors to stderr but always exit 0 (e.g. `cmd/main.go` en
 
 ## P1 — Code quality / lint
 
-### 4. `gofmt` failures
+### 4. ✅ DONE (e6c1a1e) — `gofmt` failures
 Five files are not gofmt-clean: `cmd/main.go`, `cmd/scan/main.go`, `cmd/scan/main_test.go`, `pkg/stats/stats.go`, `pkg/stats/stats_test.go`. Fix: run `gofmt -w .` and add a CI check.
 
-### 5. staticcheck finding
+### 5. ✅ DONE (d0edf83) — staticcheck finding
 `pkg/schema/schema.go:91` — `currentDB` assigned but never used in the `USE` branch (SA4006). Review whether the `USE` statement is supposed to set the default database for subsequent unqualified `CREATE TABLE`s (it currently does not — `defaultDBName` only comes from the header comment). This is likely a latent bug, not just lint noise.
 
 ### 6. Duplicated logic between the two binaries
