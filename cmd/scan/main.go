@@ -1059,10 +1059,14 @@ func main() {
 	sem := make(chan struct{}, *parallel)
 
 	// printer
+	printerDone := make(chan struct{})
 	go func() {
+		defer close(printerDone)
 		enc := createEncoder()
 		for ev := range out {
-			enc.Encode(ev)
+			if err := enc.Encode(ev); err != nil {
+				fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
+			}
 		}
 	}()
 
@@ -1102,4 +1106,5 @@ func main() {
 	wg.Wait()
 	close(stopProgress)
 	close(out)
+	<-printerDone
 }
