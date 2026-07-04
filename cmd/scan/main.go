@@ -44,6 +44,30 @@ type AggregationRecord struct {
 	Count         int                    `json:"count"`
 	FilterID      string                 `json:"filter_id,omitempty"`
 	ExtractedCols map[string]interface{} `json:"extracted_cols,omitempty"`
+	firstRow      rowRef                 // earliest row seen; source of ExtractedCols
+}
+
+// rowRef identifies a row's position in the total order of scanned rows,
+// so aggregation results are deterministic regardless of goroutine
+// scheduling under -parallel.
+type rowRef struct {
+	time time.Time
+	file string
+	pos  uint32
+	row  int
+}
+
+func (a rowRef) before(b rowRef) bool {
+	if !a.time.Equal(b.time) {
+		return a.time.Before(b.time)
+	}
+	if a.file != b.file {
+		return a.file < b.file
+	}
+	if a.pos != b.pos {
+		return a.pos < b.pos
+	}
+	return a.row < b.row
 }
 
 // Fuzzy search result structure
@@ -110,7 +134,7 @@ func exitOnParseFailures() {
 
 // Add new flags for enhanced functionality
 var (
-	extractCols    = flag.String("extractCols", "", "additional columns to extract (comma-separated)")
+	extractCols    = flag.String("extractCols", "", "additional columns to extract (comma-separated); values come from the earliest row in each category/minute group")
 	includeNulls   = flag.Bool("includeNulls", false, "include records with NULL values in output")
 	showStats      = flag.Bool("showStats", false, "show statistical summary after processing")
 	sampleSize     = flag.Int("sampleSize", 0, "limit output to N records per category (0 = no limit)")
@@ -404,12 +428,23 @@ func processFileAggregate(binfile string, cfg AggregateConfig, agg map[string]ma
 					}
 				}
 
+				ref := rowRef{time: t, file: binfile, pos: e.Header.LogPos, row: i}
+
 				aggMutex.Lock()
 				if _, ok := agg[category]; !ok {
 					agg[category] = make(map[string]*AggregationRecord)
 				}
 				if record, exists := agg[category][minute]; exists {
 					record.Count++
+					// ExtractedCols always reflects the earliest row, so
+					// results don't depend on file processing order.
+					if ref.before(record.firstRow) {
+						record.firstRow = ref
+						record.ExtractedCols = make(map[string]interface{}, len(extractedValues))
+						for colName, val := range extractedValues {
+							record.ExtractedCols[colName] = val
+						}
+					}
 				} else {
 					// Create new record with extracted values
 					record := &AggregationRecord{
@@ -418,6 +453,7 @@ func processFileAggregate(binfile string, cfg AggregateConfig, agg map[string]ma
 						Count:         1,
 						FilterID:      cfg.FilterVal,
 						ExtractedCols: make(map[string]interface{}),
+						firstRow:      ref,
 					}
 
 					// Add extracted column values to the dynamic map
@@ -864,19 +900,29 @@ func main() {
 		wg.Wait()
 		close(stopProgress)
 
-		// Emit JSON lines with enhanced metadata
+		// Emit JSON lines with enhanced metadata, sorted by category then
+		// minute so output (and -sampleSize selection) is deterministic.
 		enc := createEncoder()
-		for _, minutes := range agg {
-			// Apply sampling if requested
-			var records []*AggregationRecord
-			for _, record := range minutes {
-				records = append(records, record)
+		categories := make([]string, 0, len(agg))
+		for category := range agg {
+			categories = append(categories, category)
+		}
+		sort.Strings(categories)
+		for _, category := range categories {
+			minutes := agg[category]
+			minuteKeys := make([]string, 0, len(minutes))
+			for minute := range minutes {
+				minuteKeys = append(minuteKeys, minute)
+			}
+			sort.Strings(minuteKeys)
+
+			records := make([]*AggregationRecord, 0, len(minuteKeys))
+			for _, minute := range minuteKeys {
+				records = append(records, minutes[minute])
 			}
 
-			// Apply sampling limit
+			// Apply sampling limit - take first N records in minute order
 			if cfgType.SampleSize > 0 && len(records) > cfgType.SampleSize {
-				// Simple sampling - take first N records
-				// In production, you'd want more sophisticated sampling
 				records = records[:cfgType.SampleSize]
 			}
 
