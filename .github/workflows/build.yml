@@ -79,13 +79,13 @@ jobs:
         go build -trimpath -v -o bin/go-parse-scan-${GOOS}-${GOARCH} ./cmd/go-parse-scan
 
     - name: Upload go-parse binary
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: go-parse-${{ matrix.goos }}-${{ matrix.goarch }}
         path: bin/go-parse-${{ matrix.goos }}-${{ matrix.goarch }}
 
     - name: Upload go-parse-scan binary
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: go-parse-scan-${{ matrix.goos }}-${{ matrix.goarch }}
         path: bin/go-parse-scan-${{ matrix.goos }}-${{ matrix.goarch }}
