@@ -31,10 +31,10 @@ Keyword search, time-string parsing, event naming, and column-index lookup are i
 
 ## P2 — Dependencies & security
 
-### 7. Outdated core dependency
+### 7. ✅ DONE (eb68ce1) — Outdated core dependency
 `github.com/go-mysql-org/go-mysql` is at **v1.9.1**; latest is **v1.15.0** (bug fixes, newer MySQL 8.x event handling). Upgrade and re-run the test suite against the sample binlogs in `tests/`.
 
-### 8. No vulnerability scanning
+### 8. ✅ DONE (939ddc1 + dependabot) — No vulnerability scanning
 Add `govulncheck ./...` to CI and enable Dependabot (or Renovate) for Go modules and GitHub Actions.
 
 ## P3 — CI/CD & release engineering
