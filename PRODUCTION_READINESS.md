@@ -9,13 +9,13 @@ Items are ordered by priority. Each is small enough to knock out one at a time.
 
 ## P0 — Correctness bugs
 
-### 1. Lost output in `go-parse-scan` detect-large mode (race condition)
+### 1. ✅ DONE (4163b49) — Lost output in `go-parse-scan` detect-large mode (race condition)
 `cmd/scan/main.go` (~line 1062): the printer goroutine ranges over the `out` channel, but `main()` closes the channel and returns immediately after `wg.Wait()`. The printer goroutine may still be draining/encoding events when the process exits — **large-event results can be silently dropped**, especially the last ones. Fix: add a `done` channel (or `sync.WaitGroup`) for the printer and wait for it after `close(out)`.
 
-### 2. Non-zero work, zero exit codes
+### 2. ✅ DONE (bfc9a3b) — Non-zero work, zero exit codes
 Both tools print parse errors to stderr but always exit 0 (e.g. `cmd/main.go` end of `main()`, per-file `error parsing %s` in scan). Scripts and cron jobs can't detect failure. Fix: track failures and `os.Exit(1)` when any file fails to parse.
 
-### 3. `ExtractedCols` only captured for the first record per category/minute
+### 3. ✅ DONE (b8a6798) — `ExtractedCols` only captured for the first record per category/minute
 `cmd/scan/main.go` `processFileAggregate`: when a record already exists only `Count++` runs; extracted column values from subsequent rows are ignored, and which row "wins" is nondeterministic under `-parallel`. At minimum document that extracted values come from the first-seen row; ideally make it deterministic.
 
 ## P1 — Code quality / lint
