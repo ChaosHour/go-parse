@@ -16,20 +16,27 @@ column extraction, and schema-aware parsing.
 Specialized tool for scanning directories of binlog files to detect large operations
 and aggregate statistics.
 
-## Quick Start
+## Installation
 
-### Build Both Tools
+### From source with go install
 
 ```bash
-make build
-# or
-make install
+go install github.com/ChaosHour/go-parse/cmd/go-parse@latest
+go install github.com/ChaosHour/go-parse/cmd/go-parse-scan@latest
 ```
 
-This creates:
+### From a release
 
-- `bin/go-parse` - Main parser
-- `bin/go-parse-scan` - Batch scanner
+Download the tar.gz for your platform from the
+[releases page](https://github.com/ChaosHour/go-parse/releases); each archive
+contains both binaries. Verify with the accompanying `checksums.txt`.
+
+### Build from a checkout
+
+```bash
+make build      # builds bin/go-parse and bin/go-parse-scan
+make install    # installs both tools to GOBIN
+```
 
 ## go-parse Usage
 
@@ -130,7 +137,9 @@ This creates:
 -filterVal string     Value to filter records by (string match)
 -timeCol string      Time column name to use for grouping
 -categoryCol string  Column name that holds category id
--extractCols string  Additional columns to extract (comma-separated)
+-extractCols string  Additional columns to extract (comma-separated);
+                     values come from the earliest row in each
+                     category/minute group
 -includeNulls       Include records with NULL values in output
 -showStats          Show statistical summary after processing
 -sampleSize int     Limit output to N records per category (0 = no limit)
@@ -245,11 +254,14 @@ CREATE TABLE `sbtest1` (
 ### Using Makefile (Recommended)
 
 ```bash
-# Build both tools
+# Build both tools into bin/
 make build
 
-# Install (same as build)
+# Install both tools to GOBIN
 make install
+
+# Run the same checks as CI (gofmt, vet, staticcheck, govulncheck, tests)
+make check
 
 # Clean binaries
 make clean
@@ -264,6 +276,13 @@ go build -o bin/go-parse ./cmd/go-parse
 # Build scanner
 go build -o bin/go-parse-scan ./cmd/go-parse-scan
 ```
+
+## Exit Codes
+
+Both tools exit `0` on success and `1` on failure. `go-parse-scan` continues
+processing remaining files when one file fails to parse, but still exits `1`
+(with a `completed with N file parse failure(s)` summary on stderr) so scripts
+and cron jobs can detect partial results.
 
 ## Dependencies
 
