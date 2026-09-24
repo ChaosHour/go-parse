@@ -378,26 +378,26 @@ func (sr *SchemaRegistry) PrintWarnings() {
 		return warnings[i].name < warnings[j].name
 	})
 
-	fmt.Printf("\nSchema Validation Warnings:\n")
-	fmt.Printf("------------------------\n")
+	fmt.Fprintf(os.Stderr, "\nSchema Validation Warnings:\n")
+	fmt.Fprintf(os.Stderr, "------------------------\n")
 	for _, w := range warnings {
-		fmt.Printf("Table %-40s referenced %d times\n", w.name, w.count)
+		fmt.Fprintf(os.Stderr, "Table %-40s referenced %d times\n", w.name, w.count)
 	}
-	fmt.Printf("\nTotal missing tables: %d\n", len(warnings))
+	fmt.Fprintf(os.Stderr, "\nTotal missing tables: %d\n", len(warnings))
 }
 
 // Add PrintSummary method
 func (sr *SchemaRegistry) PrintSummary() {
-	fmt.Println("\nSchema Registry Summary:")
-	fmt.Println("=======================")
+	fmt.Fprintln(os.Stderr, "\nSchema Registry Summary:")
+	fmt.Fprintln(os.Stderr, "=======================")
 	for dbName, db := range sr.Databases {
-		fmt.Printf("\nDatabase: %s\n", dbName)
-		fmt.Printf("Tables: %d\n", len(db.Tables))
+		fmt.Fprintf(os.Stderr, "\nDatabase: %s\n", dbName)
+		fmt.Fprintf(os.Stderr, "Tables: %d\n", len(db.Tables))
 		for tableName, table := range db.Tables {
-			fmt.Printf("  - %s (%d columns)\n", tableName, len(table.Columns))
+			fmt.Fprintf(os.Stderr, "  - %s (%d columns)\n", tableName, len(table.Columns))
 		}
 	}
-	fmt.Println()
+	fmt.Fprintln(os.Stderr)
 }
 
 // LoadFromDDL loads schema information from DDL statements (USE / CREATE TABLE).

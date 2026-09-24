@@ -27,30 +27,19 @@ jobs:
         go-version: stable
         check-latest: true
 
+    # Each gate is a separate step so failures stay legible in the UI, but the
+    # commands live in the Makefile so `make check` and CI cannot drift apart.
     - name: Check formatting
-      run: |
-        unformatted=$(gofmt -l .)
-        if [ -n "$unformatted" ]; then
-          echo "The following files are not gofmt-clean:"
-          echo "$unformatted"
-          exit 1
-        fi
+      run: make fmt-check
 
-    - name: Vet
-      run: go vet ./...
-
-    - name: Staticcheck
-      run: |
-        go install honnef.co/go/tools/cmd/staticcheck@latest
-        staticcheck ./...
+    - name: Lint (vet + staticcheck)
+      run: make lint
 
     - name: Vulnerability check
-      run: |
-        go install golang.org/x/vuln/cmd/govulncheck@latest
-        govulncheck ./...
+      run: make vulncheck
 
     - name: Test
-      run: go test -race -v ./...
+      run: make test
 
   build:
     name: Build Binaries

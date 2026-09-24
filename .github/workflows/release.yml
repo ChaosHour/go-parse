@@ -21,8 +21,10 @@ jobs:
         go-version: stable
         check-latest: true
 
-    - name: Test
-      run: go test -race ./...
+    # Full gate, not just tests: a tag can be cut from any commit, so a release
+    # must not be able to publish something `main` would have rejected.
+    - name: Check
+      run: make check
 
     - name: Build release archives
       env:

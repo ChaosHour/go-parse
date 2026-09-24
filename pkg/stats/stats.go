@@ -2,6 +2,7 @@ package stats
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -73,20 +74,20 @@ func (s *Statistics) PrintStats() {
 	duration := time.Since(s.StartTime)
 	opsPerSec := float64(s.TotalEvents) / duration.Seconds()
 
-	fmt.Printf("\nParsing Statistics:\n")
-	fmt.Printf("Total Events: %d (%.2f ops/sec)\n", s.TotalEvents, opsPerSec)
-	fmt.Printf("Duration: %v\n", duration)
+	fmt.Fprintf(os.Stderr, "\nParsing Statistics:\n")
+	fmt.Fprintf(os.Stderr, "Total Events: %d (%.2f ops/sec)\n", s.TotalEvents, opsPerSec)
+	fmt.Fprintf(os.Stderr, "Duration: %v\n", duration)
 
 	if len(s.EventCounts) > 0 {
-		fmt.Printf("\nEvent Type Breakdown:\n")
+		fmt.Fprintf(os.Stderr, "\nEvent Type Breakdown:\n")
 		for eventType, count := range s.EventCounts {
-			fmt.Printf("- Type %d: %d\n", eventType, count)
+			fmt.Fprintf(os.Stderr, "- Type %d: %d\n", eventType, count)
 		}
 	}
 
 	if len(s.Stats) > 0 {
-		fmt.Printf("\nOperation Statistics:\n")
-		fmt.Printf("====================\n")
+		fmt.Fprintf(os.Stderr, "\nOperation Statistics:\n")
+		fmt.Fprintf(os.Stderr, "====================\n")
 
 		var totalOps, totalRows int
 
@@ -99,8 +100,8 @@ func (s *Statistics) PrintStats() {
 
 		for _, db := range dbNames {
 			tables := s.Stats[db]
-			fmt.Printf("\nDatabase: %s\n", db)
-			fmt.Printf("%s\n", strings.Repeat("-", len(db)+10))
+			fmt.Fprintf(os.Stderr, "\nDatabase: %s\n", db)
+			fmt.Fprintf(os.Stderr, "%s\n", strings.Repeat("-", len(db)+10))
 
 			// Sort tables for consistent output
 			tableNames := make([]string, 0, len(tables))
@@ -111,7 +112,7 @@ func (s *Statistics) PrintStats() {
 
 			for _, table := range tableNames {
 				stats := tables[table]
-				fmt.Printf("\nTable: %s\n", table)
+				fmt.Fprintf(os.Stderr, "\nTable: %s\n", table)
 
 				// Sort operations for consistent output
 				ops := make([]string, 0, len(stats.Operations))
@@ -123,11 +124,11 @@ func (s *Statistics) PrintStats() {
 				for _, op := range ops {
 					opStats := stats.Operations[op]
 					avg := float64(opStats.RowCount) / float64(opStats.Count)
-					fmt.Printf("  %-7s: %d operations affecting %d rows (avg %.1f rows/op)\n",
+					fmt.Fprintf(os.Stderr, "  %-7s: %d operations affecting %d rows (avg %.1f rows/op)\n",
 						op, opStats.Count, opStats.RowCount, avg)
 					// If we have timestamps, print time range in local timezone
 					if !opStats.FirstSeen.IsZero() {
-						fmt.Printf("    time range: %s -> %s\n",
+						fmt.Fprintf(os.Stderr, "    time range: %s -> %s\n",
 							opStats.FirstSeen.Local().Format("2006-01-02 15:04:05"),
 							opStats.LastSeen.Local().Format("2006-01-02 15:04:05"))
 					}
@@ -137,13 +138,13 @@ func (s *Statistics) PrintStats() {
 			}
 		}
 
-		fmt.Printf("\nSummary:\n")
-		fmt.Printf("--------\n")
-		fmt.Printf("Total operations: %d\n", totalOps)
-		fmt.Printf("Total rows affected: %d\n", totalRows)
+		fmt.Fprintf(os.Stderr, "\nSummary:\n")
+		fmt.Fprintf(os.Stderr, "--------\n")
+		fmt.Fprintf(os.Stderr, "Total operations: %d\n", totalOps)
+		fmt.Fprintf(os.Stderr, "Total rows affected: %d\n", totalRows)
 		if totalOps > 0 {
-			fmt.Printf("Average rows per operation: %.1f\n", float64(totalRows)/float64(totalOps))
+			fmt.Fprintf(os.Stderr, "Average rows per operation: %.1f\n", float64(totalRows)/float64(totalOps))
 		}
-		fmt.Printf("Operations per second: %.2f\n", float64(totalOps)/duration.Seconds())
+		fmt.Fprintf(os.Stderr, "Operations per second: %.2f\n", float64(totalOps)/duration.Seconds())
 	}
 }
