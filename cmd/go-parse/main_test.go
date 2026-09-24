@@ -71,3 +71,45 @@ func TestExtractColumnValues(t *testing.T) {
 		t.Fatalf("extractColumnValues() = %#v, want %#v", got, want)
 	}
 }
+
+func TestExtractThreadId(t *testing.T) {
+	cases := []struct {
+		name  string
+		query string
+		want  int64
+	}{
+		{
+			name:  "no thread id",
+			query: "BEGIN",
+			want:  0,
+		},
+		{
+			name:  "thread id present",
+			query: "SET @@session.pseudo_thread_id=42;",
+			want:  42,
+		},
+		{
+			name:  "thread id followed by more statements",
+			query: "SET @@session.pseudo_thread_id=7 /*!*/;\nBEGIN",
+			want:  7,
+		},
+		{
+			name:  "value missing at end of query",
+			query: "SET @@session.pseudo_thread_id=",
+			want:  0,
+		},
+		{
+			name:  "value is not numeric",
+			query: "SET @@session.pseudo_thread_id=abc",
+			want:  0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := extractThreadId(tc.query); got != tc.want {
+				t.Fatalf("extractThreadId(%q) = %d, want %d", tc.query, got, tc.want)
+			}
+		})
+	}
+}

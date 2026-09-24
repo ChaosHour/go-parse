@@ -5,6 +5,12 @@ BINDIR=bin
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS = -X github.com/ChaosHour/go-parse/pkg/version.value=$(VERSION)
 
+# Pinned so a new staticcheck release cannot turn a green build red on its
+# own. govulncheck stays on @latest: it only fails on vulnerabilities the code
+# actually calls, and it fetches the vulnerability database at run time, so a
+# pinned binary would buy nothing.
+STATICCHECK_VERSION ?= v0.8.1
+
 .PHONY: all build install clean scan test fmt fmt-check vet lint vulncheck check
 
 all: build
@@ -35,7 +41,7 @@ vet:
 	go vet ./...
 
 lint: vet
-	go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+	go run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) ./...
 
 vulncheck:
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...

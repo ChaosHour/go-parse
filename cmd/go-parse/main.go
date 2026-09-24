@@ -73,8 +73,13 @@ func extractThreadId(query string) int64 {
 	if strings.Contains(query, "pseudo_thread_id") {
 		parts := strings.Split(query, "pseudo_thread_id=")
 		if len(parts) > 1 {
-			idStr := strings.Fields(parts[1])[0]
-			idStr = strings.Trim(idStr, " ;")
+			// The value may be missing or be the last token on the line,
+			// so guard against an empty remainder.
+			fields := strings.Fields(parts[1])
+			if len(fields) == 0 {
+				return 0
+			}
+			idStr := strings.Trim(fields[0], " ;")
 			if id, err := strconv.ParseInt(idStr, 10, 64); err == nil {
 				return id
 			}

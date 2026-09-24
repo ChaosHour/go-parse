@@ -32,6 +32,148 @@ type SchemaRegistry struct {
 	warnings  map[string]int // Track warning count per table
 }
 
+// columnDefRegex splits a single column definition into its name and the rest
+// of the definition (the data type plus any attributes).
+var columnDefRegex = regexp.MustCompile(`^\s*([^\s]+)\s+(.+)$`)
+
+// splitTopLevelCommas splits a CREATE TABLE definition list on commas that are
+// not nested inside parentheses or quotes, so types such as decimal(10,2) and
+// enum('a','b') survive intact.
+func splitTopLevelCommas(s string) []string {
+	var parts []string
+	var buf strings.Builder
+	depth := 0
+	var quote byte
+
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+
+		if quote != 0 {
+			buf.WriteByte(c)
+			if c == '\\' && i+1 < len(s) {
+				i++
+				buf.WriteByte(s[i])
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+
+		switch c {
+		case '\'', '"', '`':
+			quote = c
+			buf.WriteByte(c)
+		case '(':
+			depth++
+			buf.WriteByte(c)
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+			buf.WriteByte(c)
+		case ',':
+			if depth == 0 {
+				parts = append(parts, buf.String())
+				buf.Reset()
+			} else {
+				buf.WriteByte(c)
+			}
+		default:
+			buf.WriteByte(c)
+		}
+	}
+
+	if strings.TrimSpace(buf.String()) != "" {
+		parts = append(parts, buf.String())
+	}
+	return parts
+}
+
+// tableBody returns the text between the outermost parentheses of a CREATE
+// TABLE statement: the column and key definition list, without the trailing
+// table options.
+func tableBody(stmt string) string {
+	start := strings.Index(stmt, "(")
+	if start < 0 {
+		return ""
+	}
+
+	depth := 0
+	var quote byte
+	for i := start; i < len(stmt); i++ {
+		c := stmt[i]
+
+		if quote != 0 {
+			if c == '\\' && i+1 < len(stmt) {
+				i++
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+
+		switch c {
+		case '\'', '"', '`':
+			quote = c
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return stmt[start+1 : i]
+			}
+		}
+	}
+	return stmt[start+1:]
+}
+
+// isKeyOrConstraint reports whether a definition is an index or constraint
+// clause rather than a column.
+func isKeyOrConstraint(def string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(def))
+	for _, prefix := range []string{
+		"PRIMARY KEY", "UNIQUE KEY", "UNIQUE INDEX", "UNIQUE(", "UNIQUE (",
+		"FOREIGN KEY", "CONSTRAINT", "FULLTEXT", "SPATIAL", "CHECK (", "CHECK(",
+		"KEY ", "KEY(", "KEY`", "INDEX ", "INDEX(", "INDEX`",
+	} {
+		if strings.HasPrefix(upper, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// columnsFromDefinition parses the column definitions out of a CREATE TABLE
+// body. Column names are stored lowercase so lookups are case-insensitive;
+// index and constraint clauses are skipped so column positions line up with
+// the row images in the binlog.
+func columnsFromDefinition(body string) []Column {
+	cols := make([]Column, 0)
+	for _, def := range splitTopLevelCommas(body) {
+		def = strings.TrimSpace(def)
+		if def == "" || isKeyOrConstraint(def) {
+			continue
+		}
+		matches := columnDefRegex.FindStringSubmatch(def)
+		if len(matches) < 3 {
+			continue
+		}
+		name := strings.Trim(matches[1], "`'\"")
+		if name == "" {
+			continue
+		}
+		cols = append(cols, Column{
+			Name:     strings.ToLower(name),
+			DataType: strings.TrimSpace(matches[2]),
+		})
+	}
+	return cols
+}
+
 func NewSchemaRegistry() *SchemaRegistry {
 	return &SchemaRegistry{
 		Databases: make(map[string]*Database),
@@ -48,6 +190,9 @@ func (sr *SchemaRegistry) LoadFromFile(filename string) error {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
+	// mysqldump can emit a whole CREATE TABLE on one line; the default 64KiB
+	// token limit would abort the scan with bufio.ErrTooLong.
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 
 	var currentDB *Database
 	var currentTable *Table
@@ -55,7 +200,6 @@ func (sr *SchemaRegistry) LoadFromFile(filename string) error {
 
 	// Fixed regex patterns without illegal characters
 	createTableRegex := regexp.MustCompile(`CREATE TABLE\s+[']?([^'\.\s(]+)[']?(?:\.[']?([^'\s(]+)[']?)?`)
-	columnRegex := regexp.MustCompile(`^\s*([^\s]+)\s+([^,\n]+)(?:,|$)`)
 
 	var inCreateTable bool
 	var buffer strings.Builder
@@ -172,28 +316,7 @@ func (sr *SchemaRegistry) LoadFromFile(filename string) error {
 					currentTable = tbl
 
 					// Extract column definitions
-					startIdx := strings.Index(createStmt, "(")
-					endIdx := strings.LastIndex(createStmt, ")")
-					if startIdx > 0 && endIdx > startIdx {
-						columnsPart := createStmt[startIdx+1 : endIdx]
-						for _, line := range strings.Split(columnsPart, ",") {
-							line = strings.TrimSpace(line)
-							if matches := columnRegex.FindStringSubmatch(line); len(matches) > 2 {
-								columnName := strings.Trim(matches[1], "`'")
-								dataType := strings.TrimSpace(matches[2])
-								if !strings.HasPrefix(strings.ToUpper(line), "PRIMARY KEY") &&
-									!strings.HasPrefix(strings.ToUpper(line), "KEY") &&
-									!strings.HasPrefix(strings.ToUpper(line), "UNIQUE KEY") &&
-									!strings.HasPrefix(strings.ToUpper(line), "CONSTRAINT") {
-									// normalize column name storage for case-insensitive lookup
-									currentTable.Columns = append(currentTable.Columns, Column{
-										Name:     strings.ToLower(columnName),
-										DataType: dataType,
-									})
-								}
-							}
-						}
-					}
+					currentTable.Columns = columnsFromDefinition(tableBody(createStmt))
 
 					if currentDB != nil {
 						// ensure stored key is lowercase for consistent lookups
@@ -255,41 +378,54 @@ func (sr *SchemaRegistry) PrintWarnings() {
 		return warnings[i].name < warnings[j].name
 	})
 
-	fmt.Printf("\nSchema Validation Warnings:\n")
-	fmt.Printf("------------------------\n")
+	fmt.Fprintf(os.Stderr, "\nSchema Validation Warnings:\n")
+	fmt.Fprintf(os.Stderr, "------------------------\n")
 	for _, w := range warnings {
-		fmt.Printf("Table %-40s referenced %d times\n", w.name, w.count)
+		fmt.Fprintf(os.Stderr, "Table %-40s referenced %d times\n", w.name, w.count)
 	}
-	fmt.Printf("\nTotal missing tables: %d\n", len(warnings))
+	fmt.Fprintf(os.Stderr, "\nTotal missing tables: %d\n", len(warnings))
 }
 
 // Add PrintSummary method
 func (sr *SchemaRegistry) PrintSummary() {
-	fmt.Println("\nSchema Registry Summary:")
-	fmt.Println("=======================")
+	fmt.Fprintln(os.Stderr, "\nSchema Registry Summary:")
+	fmt.Fprintln(os.Stderr, "=======================")
 	for dbName, db := range sr.Databases {
-		fmt.Printf("\nDatabase: %s\n", dbName)
-		fmt.Printf("Tables: %d\n", len(db.Tables))
+		fmt.Fprintf(os.Stderr, "\nDatabase: %s\n", dbName)
+		fmt.Fprintf(os.Stderr, "Tables: %d\n", len(db.Tables))
 		for tableName, table := range db.Tables {
-			fmt.Printf("  - %s (%d columns)\n", tableName, len(table.Columns))
+			fmt.Fprintf(os.Stderr, "  - %s (%d columns)\n", tableName, len(table.Columns))
 		}
 	}
-	fmt.Println()
+	fmt.Fprintln(os.Stderr)
 }
 
-// LoadFromDDL loads schema information from DDL statements (CREATE TABLE)
+// LoadFromDDL loads schema information from DDL statements (USE / CREATE TABLE).
+// USE statements set the database that subsequent unqualified CREATE TABLE
+// statements are attached to, so auto-discovered tables land under their real
+// database name rather than a placeholder.
 func (sr *SchemaRegistry) LoadFromDDL(ddlStatements []string) error {
+	currentDB := ""
 	for _, ddl := range ddlStatements {
-		if err := sr.parseCreateTableStatement(ddl); err != nil {
-			// Log warning but continue with other statements
-			fmt.Printf("Warning: Failed to parse DDL statement: %v\n", err)
+		trimmed := strings.TrimSpace(ddl)
+		if strings.HasPrefix(strings.ToUpper(trimmed), "USE ") {
+			db := strings.Trim(trimmed[len("USE "):], " ;`'\"")
+			currentDB = strings.ToLower(db)
+			continue
+		}
+		if err := sr.parseCreateTableStatement(trimmed, currentDB); err != nil {
+			// Log warning but continue with other statements. This goes to
+			// stderr so it can't corrupt the JSON written to stdout.
+			fmt.Fprintf(os.Stderr, "Warning: Failed to parse DDL statement: %v\n", err)
 		}
 	}
 	return nil
 }
 
-// parseCreateTableStatement parses a single CREATE TABLE statement
-func (sr *SchemaRegistry) parseCreateTableStatement(createStmt string) error {
+// parseCreateTableStatement parses a single CREATE TABLE statement. Unqualified
+// table names are attached to defaultDB, or to "discovered" when no USE
+// statement has been seen.
+func (sr *SchemaRegistry) parseCreateTableStatement(createStmt, defaultDB string) error {
 	// Clean up the statement
 	createStmt = strings.TrimSpace(createStmt)
 	if !strings.HasPrefix(strings.ToUpper(createStmt), "CREATE TABLE") {
@@ -309,14 +445,13 @@ func (sr *SchemaRegistry) parseCreateTableStatement(createStmt string) error {
 		dbName = strings.ToLower(strings.Trim(matches[1], "`'\""))
 		tableName = strings.Trim(matches[2], "`'\"")
 	} else {
-		// just table format - assume default database
-		dbName = "discovered" // default database name for autodiscovered schemas
+		// just table format - use the database set by the last USE statement
+		dbName = defaultDB
+		if dbName == "" {
+			dbName = "discovered" // fallback when no USE statement was seen
+		}
 		tableName = strings.Trim(matches[1], "`'\"")
 	}
-
-	// Extract column definitions
-	columnRegex := regexp.MustCompile(`\s*['"]?([^'"\s]+)['"]?\s+([^,;\n]+)(?:,|$)`)
-	columnMatches := columnRegex.FindAllStringSubmatch(createStmt, -1)
 
 	// Ensure database exists
 	if _, exists := sr.Databases[dbName]; !exists {
@@ -329,28 +464,7 @@ func (sr *SchemaRegistry) parseCreateTableStatement(createStmt string) error {
 	// Create table
 	tbl := &Table{
 		Name:    tableName,
-		Columns: make([]Column, 0, len(columnMatches)),
-	}
-
-	// Parse columns
-	for _, match := range columnMatches {
-		if len(match) >= 3 {
-			colName := strings.Trim(match[1], "`'\"")
-			colType := strings.TrimSpace(match[2])
-
-			// Skip if this looks like a constraint or key definition
-			if strings.Contains(strings.ToUpper(colType), "PRIMARY KEY") ||
-				strings.Contains(strings.ToUpper(colType), "KEY") ||
-				strings.Contains(strings.ToUpper(colType), "CONSTRAINT") ||
-				strings.Contains(strings.ToUpper(colType), "INDEX") {
-				continue
-			}
-
-			tbl.Columns = append(tbl.Columns, Column{
-				Name:     colName,
-				DataType: colType,
-			})
-		}
+		Columns: columnsFromDefinition(tableBody(createStmt)),
 	}
 
 	// Store table (use lowercase key for lookups)
