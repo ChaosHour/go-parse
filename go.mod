@@ -2,7 +2,7 @@ module github.com/ChaosHour/go-parse
 
 go 1.26.4
 
-require github.com/go-mysql-org/go-mysql v1.15.0
+require github.com/go-mysql-org/go-mysql v1.16.0
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
