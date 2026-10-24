@@ -9,7 +9,7 @@ LDFLAGS = -X github.com/ChaosHour/go-parse/pkg/version.value=$(VERSION)
 # own. govulncheck stays on @latest: it only fails on vulnerabilities the code
 # actually calls, and it fetches the vulnerability database at run time, so a
 # pinned binary would buy nothing.
-STATICCHECK_VERSION ?= v0.8.1
+STATICCHECK_VERSION ?= v0.8.2
 
 .PHONY: all build install clean scan test fmt fmt-check vet lint vulncheck check
 
